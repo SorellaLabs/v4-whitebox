@@ -5,7 +5,7 @@ use alloy_primitives::Log;
 use futures_util::{FutureExt, StreamExt};
 
 use super::PoolMangerBlocks;
-use crate::uniswap::{pool_manager::PoolManagerError, pool_providers::PoolManagerProvider};
+use crate::uniswap::pool_providers::{PoolManagerError, PoolManagerProvider};
 
 #[derive(Clone)]
 pub struct ProviderAdapter<P>

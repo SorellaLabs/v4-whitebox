@@ -17,7 +17,16 @@ use uniswap_v3_math::{
     tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK},
 };
 
-use super::{pool_data_loader::PoolData, pool_manager::TickRangeToLoad};
+use super::pool_data_loader::PoolData;
+// use super::pool_manager::TickRangeToLoad;
+
+#[derive(Debug, Clone, Copy)]
+pub struct TickRangeToLoad {
+    pub pool_id: PoolId,
+    pub start_tick: i32,
+    pub zfo: bool,
+    pub tick_count: u16,
+}
 use crate::uniswap::{
     ConversionError, i32_to_i24,
     pool_data_loader::{DataLoader, PoolDataLoader, TickData},

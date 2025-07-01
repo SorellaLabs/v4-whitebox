@@ -31,6 +31,7 @@ futures-util = "0"
 hex = "0.4.3"
 itertools = "0"
 malachite = "0.4"
+malachite-q = "0.4"
 pade = { git = "https://github.com/SorellaLabs/pade.git", branch = "main" }
 pade-macro = { git = "https://github.com/SorellaLabs/pade.git", branch = "main" }
 rand = "0.9.0"

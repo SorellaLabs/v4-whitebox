@@ -1,3 +1,8 @@
+use super::pool::PoolId;
+use super::pool_key::PoolKey;
+use alloy::primitives::aliases::U24;
+use std::collections::HashMap;
+
 #[derive(Debug, Default, Clone)]
 pub struct UniswapPoolRegistry {
     pub pools: HashMap<PoolId, PoolKey>,

@@ -4509,6 +4509,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "malachite",
+ "malachite-q",
  "pade",
  "pade-macro",
  "rand 0.9.1",

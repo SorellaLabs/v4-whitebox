@@ -9,8 +9,8 @@ use alloy::{
 };
 use futures::future::join_all;
 
+use super::pool_data_loader::DataLoader;
 use super::{pool::EnhancedUniswapPool, pool_data_loader::PoolDataLoader};
-use crate::pool_data_loader::DataLoader;
 
 pub const INITIAL_TICKS_PER_SIDE: u16 = 400;
 

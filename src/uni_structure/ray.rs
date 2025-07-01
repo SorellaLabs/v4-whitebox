@@ -9,7 +9,7 @@ use alloy_primitives::U160;
 use malachite::{
     Natural, Rational,
     num::{
-        arithmetic::traits::{CeilingRoot, DivRound, Mod, Pow, SaturatingSub},
+        arithmetic::traits::{CeilingRoot, DivRound, Mod, Pow, PowerOf2, SaturatingSub},
         conversion::traits::{RoundingInto, SaturatingFrom},
     },
     rounding_modes::RoundingMode,
@@ -19,17 +19,17 @@ use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
 
 pub fn const_1e27() -> &'static Natural {
     static TWENTYSEVEN: OnceLock<Natural> = OnceLock::new();
-    TWENTYSEVEN.get_or_init(|| Natural::from_sci_string("1e27").unwrap())
+    TWENTYSEVEN.get_or_init(|| Natural::from(10u32).pow(27u64))
 }
 
 pub fn const_1e6() -> &'static Natural {
     static SIX: OnceLock<Natural> = OnceLock::new();
-    SIX.get_or_init(|| Natural::from_sci_string("1e6").unwrap())
+    SIX.get_or_init(|| Natural::from(10u32).pow(6u64))
 }
 
 pub fn const_1e54() -> &'static Natural {
     static FIFTYFOUR: OnceLock<Natural> = OnceLock::new();
-    FIFTYFOUR.get_or_init(|| Natural::from_sci_string("1e54").unwrap())
+    FIFTYFOUR.get_or_init(|| Natural::from(10u32).pow(54u64))
 }
 
 pub fn const_2_192() -> &'static Natural {
