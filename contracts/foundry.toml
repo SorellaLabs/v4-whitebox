@@ -1,0 +1,31 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+optimizer = true
+optimizer_runs = 9999999999
+
+solc = "0.8.26"
+bytecode_hash = "none"
+viaIR = false
+verbosity = 3
+fs_permissions = [{ access = "read-write", path = ".forge-snapshots/" }]
+ast = true
+evm_version = "cancun"
+dynamic_test_linking = true
+ignored_error_codes = [
+  2394, # Transient storage warning
+  3860, # Initcode size too large
+  5574, # Contract size too large
+]
+
+
+remappings = [
+  "v4-core/src/=lib/v4-periphery/lib/v4-core/src/",
+  "v4-periphery/src/=lib/v4-periphery/src/",
+  "forge-std/=lib/forge-std/src",
+  "core/src/=lib/angstrom/contracts/src/",
+  "solady/src/=lib/angstrom/contracts/lib/solady/src/",
+  "solmate/=lib/angstrom/contracts/lib/solmate/",
+]
+
