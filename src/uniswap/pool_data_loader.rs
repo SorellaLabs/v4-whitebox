@@ -1,9 +1,9 @@
 use std::{collections::HashMap, future::Future, sync::Arc};
 
-use crate::{
-    matching::{Ray, SqrtPriceX96},
-    primitive::{PoolId as AngstromPoolId, UniswapPoolRegistry},
-};
+use super::pool::PoolId as AngstromPoolId;
+use super::pool_registry::UniswapPoolRegistry;
+use crate::uni_structure::ray::Ray;
+use crate::uni_structure::sqrt_pricex96::SqrtPriceX96;
 use alloy::{
     primitives::{Address, BlockNumber, U256, aliases::I24},
     providers::Provider,

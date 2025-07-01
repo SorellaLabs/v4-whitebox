@@ -1,17 +1,15 @@
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Rem, sync::Arc};
 
-// use std::iter::
-use crate::{
-    matching::uniswap::TickInfo,
-    primitive::PoolId,
-    uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity},
-};
+use crate::uni_structure::tick_info::TickInfo;
+
+use crate::uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity};
 use alloy::{
     hex,
     primitives::{Address, B256, BlockNumber, I256, U256, aliases::I24},
     providers::Provider,
     transports::Transport,
 };
+use alloy_primitives::FixedBytes;
 use itertools::Itertools;
 use thiserror::Error;
 use uniswap_v3_math::{
@@ -25,6 +23,7 @@ use crate::uniswap::{
     pool_data_loader::{DataLoader, PoolDataLoader, TickData},
 };
 
+pub type PoolId = FixedBytes<32>;
 #[derive(Default)]
 pub struct SwapResult {
     pub amount0: I256,

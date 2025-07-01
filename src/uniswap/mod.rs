@@ -8,8 +8,10 @@ pub mod loaders;
 pub mod pool;
 pub mod pool_data_loader;
 pub mod pool_factory;
-pub mod pool_manager;
+pub mod pool_key;
+// pub mod pool_manager;
 pub mod pool_providers;
+pub mod pool_registry;
 
 const MIN_I24: i32 = -8_388_608_i32;
 const MAX_I24: i32 = 8_388_607_i32;

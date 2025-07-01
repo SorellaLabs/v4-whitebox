@@ -1,8 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    contract_bindings::angstrom::Angstrom::PoolKey,
-    primitive::{PoolId, UniswapPoolRegistry},
+    uniswap::pool::PoolId, uniswap::pool_key::PoolKey, uniswap::pool_registry::UniswapPoolRegistry,
 };
 use alloy::{
     primitives::{Address, aliases::U24},
@@ -11,7 +10,7 @@ use alloy::{
 use futures::future::join_all;
 
 use super::{pool::EnhancedUniswapPool, pool_data_loader::PoolDataLoader};
-use crate::DataLoader;
+use crate::pool_data_loader::DataLoader;
 
 pub const INITIAL_TICKS_PER_SIDE: u16 = 400;
 
