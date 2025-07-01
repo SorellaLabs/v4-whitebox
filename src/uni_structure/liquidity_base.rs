@@ -12,7 +12,8 @@ use uniswap_v3_math::{
     tick_math::{MAX_TICK, MIN_TICK, get_tick_at_sqrt_ratio},
 };
 
-use crate::matching::{SqrtPriceX96, uniswap::TickInfo};
+use super::tick_info::TickInfo;
+use crate::sqrt_pricex96::SqrtPriceX96;
 
 /// baseline holder for
 #[derive(Debug, Clone, Serialize, Deserialize)]

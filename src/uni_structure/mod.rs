@@ -1,15 +1,15 @@
-use std::ops::{Add, Sub};
-
 use alloy::primitives::I256;
 use liquidity_base::BaselineLiquidity;
 use pool_swap::{PoolSwap, PoolSwapResult};
 use serde::{Deserialize, Serialize};
 
-use crate::matching::{SqrtPriceX96, uniswap::Quantity};
+use sqrt_pricex96::SqrtPriceX96;
 
-pub mod donation;
 pub mod liquidity_base;
 pub mod pool_swap;
+pub mod ray;
+pub mod sqrt_pricex96;
+pub mod tick_info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaselinePoolState {
@@ -123,25 +123,5 @@ impl BaselinePoolState {
             fee: 0,
         }
         .swap()
-    }
-}
-
-impl<'a> Add<Quantity> for &'a BaselinePoolState {
-    type Output = eyre::Result<PoolSwapResult<'a>>;
-
-    fn add(self, rhs: Quantity) -> Self::Output {
-        let amount = I256::unchecked_from(rhs.magnitude());
-        let direction = rhs.as_input();
-        self.swap_current_with_amount(amount, direction.is_ask())
-    }
-}
-
-impl<'a> Sub<Quantity> for &'a BaselinePoolState {
-    type Output = eyre::Result<PoolSwapResult<'a>>;
-
-    fn sub(self, rhs: Quantity) -> Self::Output {
-        let amount = I256::unchecked_from(rhs.magnitude()).saturating_neg();
-        let direction = rhs.as_output();
-        self.swap_current_with_amount(amount, direction.is_ask())
     }
 }
