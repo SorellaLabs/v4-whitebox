@@ -102,7 +102,7 @@ impl PoolServiceRunner {
 
         // Create and initialize pool manager service
         tracing::info!("🔄 Initializing pool service...");
-        let pool_service = PoolManagerService::<_, 400>::new(
+        let pool_service = PoolManagerService::new(
             provider.clone(),
             self.config.angstrom_address,
             self.config.controller_address,
@@ -128,20 +128,17 @@ impl PoolServiceRunner {
     }
 
     /// Log a summary of discovered pools
-    fn log_pool_summary<P: Provider + Clone + 'static>(
-        &self,
-        service: &PoolManagerService<P, 400>
-    ) {
-        for (i, (pool_id, pool)) in service.get_pools().iter().enumerate() {
+    fn log_pool_summary<P: Provider + Clone + 'static>(&self, service: &PoolManagerService<P>) {
+        for (i, (pool_id, pool_info)) in service.get_pools().iter().enumerate() {
             tracing::info!(
                 "Pool {}: {} | {}-{} | Fee: {} | Liquidity: {} | Tick: {}",
                 i + 1,
                 hex::encode(&pool_id[..8]), // Show first 8 bytes of pool ID
-                pool.token0,
-                pool.token1,
-                pool.book_fee,
-                pool.liquidity,
-                pool.tick
+                pool_info.token0,
+                pool_info.token1,
+                pool_info.baseline_state.fee(),
+                pool_info.baseline_state.current_liquidity(),
+                pool_info.baseline_state.current_tick()
             );
         }
     }

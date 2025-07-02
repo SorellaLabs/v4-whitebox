@@ -42,6 +42,10 @@ impl BaselinePoolState {
         self.liquidity.start_sqrt_price
     }
 
+    pub fn tick_spacing(&self) -> i32 {
+        self.liquidity.tick_spacing
+    }
+
     pub fn noop(&self) -> PoolSwapResult<'_> {
         PoolSwapResult {
             fee:           self.fee,

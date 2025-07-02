@@ -4,6 +4,7 @@ use alloy_primitives::{I256, aliases::I24};
 use malachite::num::arithmetic::traits::Sign;
 use thiserror::Error;
 
+pub mod baseline_pool_factory;
 pub mod fetch_pool_keys;
 pub mod loaders;
 pub mod pool;

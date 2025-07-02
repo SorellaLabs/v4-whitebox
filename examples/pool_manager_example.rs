@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create and initialize the pool manager service
     println!("Initializing pool manager service...");
 
-    let pool_service = PoolManagerService::<_, 400>::new(
+    let pool_service = PoolManagerService::new(
         provider.clone(),
         angstrom_address,
         controller_address,
@@ -45,14 +45,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔗 Current block: {}", pool_service.current_block());
 
     // Display information about discovered pools
-    for (pool_id, pool) in pool_service.get_pools() {
+    for (pool_id, pool_info) in pool_service.get_pools() {
         println!("Pool: {:?}", pool_id);
-        println!("  Token0: {}", pool.token0);
-        println!("  Token1: {}", pool.token1);
-        println!("  Fee: {}", pool.book_fee);
-        println!("  Tick Spacing: {}", pool.tick_spacing);
-        println!("  Liquidity: {}", pool.liquidity);
-        println!("  Current Tick: {}", pool.tick);
+        println!("  Token0: {}", pool_info.token0);
+        println!("  Token1: {}", pool_info.token1);
+        println!("  Fee: {}", pool_info.baseline_state.fee());
+        println!("  Tick Spacing: {}", pool_info.baseline_state.tick_spacing());
+        println!("  Liquidity: {}", pool_info.baseline_state.current_liquidity());
+        println!("  Current Tick: {}", pool_info.baseline_state.current_tick());
         println!("  ---");
     }
 

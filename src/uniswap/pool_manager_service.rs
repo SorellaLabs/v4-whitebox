@@ -4,12 +4,21 @@ use alloy::{primitives::Address, providers::Provider};
 use thiserror::Error;
 
 use super::{
+    baseline_pool_factory::{BaselinePoolFactory, BaselinePoolFactoryError},
     fetch_pool_keys::{fetch_angstrom_pools, set_controller_address},
-    pool::{EnhancedUniswapPool, PoolId},
+    pool::PoolId,
     pool_data_loader::DataLoader,
-    pool_factory::V4PoolFactory,
     pool_key::PoolKey
 };
+use crate::uni_structure::BaselinePoolState;
+
+/// Pool information combining BaselinePoolState with token metadata
+#[derive(Debug, Clone)]
+pub struct PoolInfo {
+    pub baseline_state: BaselinePoolState,
+    pub token0:         Address,
+    pub token1:         Address
+}
 
 #[derive(Error, Debug)]
 pub enum PoolManagerServiceError {
@@ -18,25 +27,27 @@ pub enum PoolManagerServiceError {
     #[error("Pool initialization error: {0}")]
     PoolInit(String),
     #[error("Pool factory error: {0}")]
-    PoolFactory(String)
+    PoolFactory(String),
+    #[error("Baseline pool factory error: {0}")]
+    BaselineFactory(#[from] BaselinePoolFactoryError)
 }
 
 /// Service for managing Uniswap V4 pools with real-time block subscription
 /// updates
-pub struct PoolManagerService<P, const TICKS: u16 = 400>
+pub struct PoolManagerService<P>
 where
     P: Provider + Clone + 'static
 {
-    factory:            V4PoolFactory<P, TICKS>,
+    factory:            BaselinePoolFactory<P>,
     provider:           Arc<P>,
     angstrom_address:   Address,
     controller_address: Address,
     deploy_block:       u64,
-    pools:              HashMap<PoolId, EnhancedUniswapPool<DataLoader>>,
+    pools:              HashMap<PoolId, PoolInfo>,
     current_block:      u64
 }
 
-impl<P, const TICKS: u16> PoolManagerService<P, TICKS>
+impl<P> PoolManagerService<P>
 where
     P: Provider + Clone + 'static,
     DataLoader: super::pool_data_loader::PoolDataLoader
@@ -55,7 +66,7 @@ where
         // Create an empty registry for the factory - we'll populate it during
         // initialization
         let registry = super::pool_registry::UniswapPoolRegistry::default();
-        let factory = V4PoolFactory::new(provider.clone(), registry, pool_manager_address);
+        let factory = BaselinePoolFactory::new(provider.clone(), registry, pool_manager_address);
 
         let mut service = Self {
             factory,
@@ -99,12 +110,14 @@ where
             let pool_id = PoolId::from(pool_key);
 
             // Use the factory to create and initialize the pool
-            let pool = self
+            let (baseline_state, token0, token1) = self
                 .factory
-                .create_new_angstrom_pool(pool_key, current_block)
-                .await;
+                .create_new_baseline_angstrom_pool(pool_key, current_block)
+                .await?;
 
-            self.pools.insert(pool_id, pool);
+            let pool_info = PoolInfo { baseline_state, token0, token1 };
+
+            self.pools.insert(pool_id, pool_info);
         }
 
         tracing::info!("Successfully initialized {} pools", self.pools.len());
@@ -112,12 +125,12 @@ where
     }
 
     /// Get all currently tracked pools
-    pub fn get_pools(&self) -> &HashMap<PoolId, EnhancedUniswapPool<DataLoader>> {
+    pub fn get_pools(&self) -> &HashMap<PoolId, PoolInfo> {
         &self.pools
     }
 
     /// Get a specific pool by its ID
-    pub fn get_pool(&self, pool_id: &PoolId) -> Option<&EnhancedUniswapPool<DataLoader>> {
+    pub fn get_pool(&self, pool_id: &PoolId) -> Option<&PoolInfo> {
         self.pools.get(pool_id)
     }
 
@@ -192,13 +205,15 @@ where
         tracing::info!("Creating new pool: {:?}", pool_id);
 
         // Create new pool using the factory
-        let new_pool = self
+        let (baseline_state, token0, token1) = self
             .factory
-            .create_new_angstrom_pool(pool_key, block_number)
-            .await;
+            .create_new_baseline_angstrom_pool(pool_key, block_number)
+            .await?;
+
+        let pool_info = PoolInfo { baseline_state, token0, token1 };
 
         // Add to our tracking map
-        self.pools.insert(pool_id, new_pool);
+        self.pools.insert(pool_id, pool_info);
 
         tracing::info!("Successfully created and initialized new pool: {:?}", pool_id);
         Ok(())
@@ -287,7 +302,7 @@ mod tests {
 
         // This will likely fail due to network issues in testing, but we can test the
         // structure
-        let result = PoolManagerService::<_, 400>::new(
+        let result = PoolManagerService::new(
             provider,
             angstrom_addr,
             controller_addr,
@@ -356,7 +371,7 @@ mod tests {
         let deploy_block = current_block.saturating_sub(10); // Use very recent block to avoid large range
 
         // Use different addresses to avoid controller collision
-        let result = PoolManagerService::<_, 400>::new(
+        let result = PoolManagerService::new(
             provider,
             address!("0x1111111111111111111111111111111111111111"),
             address!("0x2222222222222222222222222222222222222222"),
