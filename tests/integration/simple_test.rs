@@ -29,7 +29,7 @@ async fn test_sepolia_service_creation() {
     let current_block = provider.get_block_number().await;
     assert!(current_block.is_ok(), "Failed to get current block number");
 
-    println!("✅ Connected to Sepolia at block: {:?}", current_block);
+    println!("Connected to Sepolia at block: {:?}", current_block);
 
     // Test service creation with Sepolia configuration
     let result = PoolManagerService::<_, 400>::new(
@@ -43,9 +43,9 @@ async fn test_sepolia_service_creation() {
 
     match result {
         Ok(service) => {
-            println!("✅ Service created successfully!");
-            println!("📊 Found {} pools", service.pool_count());
-            println!("🔗 Current block: {}", service.current_block());
+            println!("Service created successfully!");
+            println!("Found {} pools", service.pool_count());
+            println!("Current block: {}", service.current_block());
 
             // Verify service has reasonable data
             assert!(service.current_block() >= SepoliaConfig::ANGSTROM_DEPLOYED_BLOCK);
@@ -63,7 +63,7 @@ async fn test_sepolia_service_creation() {
         Err(e) => {
             // Print error for debugging but don't fail the test
             println!(
-                "⚠️  Service creation failed (this might be expected in test environment): {:?}",
+                "Service creation failed (this might be expected in test environment): {:?}",
                 e
             );
 
@@ -109,7 +109,7 @@ async fn test_sepolia_block_handling() {
         let latest_result = service.update_to_latest_block().await;
         if let Ok(latest_block) = latest_result {
             assert!(latest_block >= initial_block);
-            println!("✅ Updated from block {} to {}", initial_block, latest_block);
+            println!("Updated from block {} to {}", initial_block, latest_block);
         }
 
         // Test handle specific block
@@ -117,9 +117,9 @@ async fn test_sepolia_block_handling() {
         let handle_result = service.handle_new_block(next_block).await;
         assert!(handle_result.is_ok());
 
-        println!("✅ Block handling tests passed");
+        println!("Block handling tests passed");
     } else {
-        println!("⚠️  Service creation failed - skipping block handling tests");
+        println!("Service creation failed - skipping block handling tests");
     }
 }
 
@@ -137,5 +137,5 @@ fn test_sepolia_constants_validity() {
     let rpc_url = SepoliaConfig::rpc_url();
     assert!(rpc_url.starts_with("http"));
 
-    println!("✅ Sepolia constants are valid");
+    println!("Sepolia constants are valid");
 }
