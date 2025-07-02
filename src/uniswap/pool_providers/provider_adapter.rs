@@ -10,14 +10,14 @@ use crate::uniswap::pool_providers::{PoolManagerError, PoolManagerProvider};
 #[derive(Clone)]
 pub struct ProviderAdapter<P>
 where
-    P: Provider + Send + Sync,
+    P: Provider + Send + Sync
 {
-    inner: Arc<P>,
+    inner: Arc<P>
 }
 
 impl<P> ProviderAdapter<P>
 where
-    P: Provider + Send + Sync,
+    P: Provider + Send + Sync
 {
     pub fn new(inner: Arc<P>) -> Self {
         Self { inner }
@@ -26,7 +26,7 @@ where
 
 impl<P> PoolManagerProvider for ProviderAdapter<P>
 where
-    P: Provider + Send + Sync + Clone + 'static,
+    P: Provider + Send + Sync + Clone + 'static
 {
     fn provider(&self) -> Arc<impl Provider> {
         self.inner.clone()
@@ -55,7 +55,7 @@ where
             .iter()
             .map(|alloy_log| Log {
                 address: alloy_log.address(),
-                data: alloy_log.data().clone(),
+                data:    alloy_log.data().clone()
             })
             .collect();
 

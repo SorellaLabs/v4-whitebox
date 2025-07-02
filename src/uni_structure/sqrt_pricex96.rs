@@ -5,8 +5,8 @@ use malachite::{
     Natural, Rational,
     num::{
         arithmetic::traits::{CeilingRoot, DivRound, Pow, PowerOf2},
-        conversion::traits::RoundingInto,
-    },
+        conversion::traits::RoundingInto
+    }
 };
 use serde::{Deserialize, Serialize};
 use uniswap_v3_math::tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
@@ -43,9 +43,7 @@ impl SqrtPriceX96 {
     /// Produces the maximum SqrtPriceX96 valid for a given tick before we step
     /// forward into the next tick
     pub fn max_at_tick(tick: i32) -> eyre::Result<Self> {
-        Ok(Self::from(
-            get_sqrt_ratio_at_tick(tick + 1)?.saturating_sub(U256::from(1)),
-        ))
+        Ok(Self::from(get_sqrt_ratio_at_tick(tick + 1)?.saturating_sub(U256::from(1))))
     }
 
     pub fn to_tick(&self) -> eyre::Result<i32> {
@@ -94,10 +92,8 @@ impl From<SqrtPriceX96> for U160 {
 impl From<Ray> for SqrtPriceX96 {
     fn from(value: Ray) -> Self {
         let numerator = Natural::from_limbs_asc(value.as_limbs()) * const_2_192();
-        let (res, _) = numerator.div_round(
-            const_1e27(),
-            malachite::rounding_modes::RoundingMode::Ceiling,
-        );
+        let (res, _) =
+            numerator.div_round(const_1e27(), malachite::rounding_modes::RoundingMode::Ceiling);
         let root = res.ceiling_root(2);
         let reslimbs = root.into_limbs_asc();
         let output: U160 = Uint::from_limbs_slice(&reslimbs);
@@ -117,10 +113,7 @@ mod tests {
         let max_at_tick = SqrtPriceX96::max_at_tick(100000).unwrap();
         let next_tick = SqrtPriceX96::at_tick(100001).unwrap();
 
-        assert!(
-            next_tick != max_at_tick,
-            "Max at tick is equal to next tick"
-        );
+        assert!(next_tick != max_at_tick, "Max at tick is equal to next tick");
         assert!(
             get_tick_at_sqrt_ratio(max_at_tick.into()).unwrap() == 100000,
             "Max tick outside range"

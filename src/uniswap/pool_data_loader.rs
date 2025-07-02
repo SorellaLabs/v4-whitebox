@@ -1,24 +1,27 @@
 use std::{collections::HashMap, future::Future, sync::Arc};
 
-use super::pool::PoolId as AngstromPoolId;
-use super::pool_registry::UniswapPoolRegistry;
-use crate::uni_structure::ray::Ray;
-use crate::uni_structure::sqrt_pricex96::SqrtPriceX96;
 use alloy::{
     primitives::{Address, BlockNumber, U256, aliases::I24},
     providers::Provider,
     sol,
-    sol_types::{SolEvent, SolType},
+    sol_types::{SolEvent, SolType}
 };
 use alloy_primitives::{B256, I256, Log};
 use itertools::Itertools;
 use uniswap_v3_math::tick_math::{MAX_TICK, MIN_TICK};
 
-use super::loaders::{
-    get_uniswap_v_4_pool_data::GetUniswapV4PoolData,
-    get_uniswap_v_4_tick_data::GetUniswapV4TickData,
+use super::{
+    loaders::{
+        get_uniswap_v_4_pool_data::GetUniswapV4PoolData,
+        get_uniswap_v_4_tick_data::GetUniswapV4TickData
+    },
+    pool::PoolId as AngstromPoolId,
+    pool_registry::UniswapPoolRegistry
 };
-use crate::uniswap::{i128_to_i256, pool::PoolError};
+use crate::{
+    uni_structure::{ray::Ray, sqrt_pricex96::SqrtPriceX96},
+    uniswap::{i128_to_i256, pool::PoolError}
+};
 
 sol! {
     #[derive(Debug)]
@@ -62,17 +65,11 @@ sol! {
 
 impl TickData {
     pub fn default_lowest() -> Self {
-        Self {
-            tick: I24::unchecked_from(MIN_TICK),
-            ..Default::default()
-        }
+        Self { tick: I24::unchecked_from(MIN_TICK), ..Default::default() }
     }
 
     pub fn default_highest() -> Self {
-        Self {
-            tick: I24::unchecked_from(MAX_TICK),
-            ..Default::default()
-        }
+        Self { tick: I24::unchecked_from(MAX_TICK), ..Default::default() }
     }
 }
 
@@ -101,28 +98,28 @@ sol! {
 
 #[derive(Debug, Clone)]
 pub struct SwapEvent {
-    pub sender: Address,
-    pub amount0: I256,
-    pub amount1: I256,
+    pub sender:         Address,
+    pub amount0:        I256,
+    pub amount1:        I256,
     pub sqrt_price_x96: U256,
-    pub liquidity: u128,
-    pub tick: i32,
+    pub liquidity:      u128,
+    pub tick:           i32
 }
 
 #[derive(Debug, Clone)]
 pub struct ModifyPositionEvent {
-    pub sender: Address,
-    pub tick_lower: i32,
-    pub tick_upper: i32,
-    pub liquidity_delta: i128,
+    pub sender:          Address,
+    pub tick_lower:      i32,
+    pub tick_upper:      i32,
+    pub liquidity_delta: i128
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct DataLoader {
     private_address: AngstromPoolId,
-    public_address: AngstromPoolId,
-    pool_registry: Option<UniswapPoolRegistry>,
-    pool_manager: Option<Address>,
+    public_address:  AngstromPoolId,
+    pool_registry:   Option<UniswapPoolRegistry>,
+    pool_manager:    Option<Address>
 }
 
 impl DataLoader {
@@ -143,13 +140,13 @@ pub trait PoolDataLoader: Clone {
         num_ticks: u16,
         tick_spacing: I24,
         block_number: Option<BlockNumber>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> impl Future<Output = Result<(Vec<TickData>, U256), PoolError>> + Send;
 
     fn load_pool_data<P: Provider>(
         &self,
         block_number: Option<BlockNumber>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> impl Future<Output = Result<PoolData, PoolError>> + Send;
 
     fn private_address(&self) -> AngstromPoolId;
@@ -173,13 +170,13 @@ impl DataLoader {
         private_address: AngstromPoolId,
         public_address: AngstromPoolId,
         registry: UniswapPoolRegistry,
-        pool_manager: Address,
+        pool_manager: Address
     ) -> Self {
         Self {
             private_address,
             public_address,
             pool_registry: Some(registry),
-            pool_manager: Some(pool_manager),
+            pool_manager: Some(pool_manager)
         }
     }
 }
@@ -202,7 +199,7 @@ impl PoolDataLoader for DataLoader {
     async fn load_pool_data<P: Provider>(
         &self,
         block_number: Option<BlockNumber>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> Result<PoolData, PoolError> {
         let id = self.public_address();
 
@@ -221,27 +218,27 @@ impl PoolDataLoader for DataLoader {
             self.private_address(),
             self.pool_manager(),
             pool_key.currency0,
-            pool_key.currency1,
+            pool_key.currency1
         );
 
         let data = match block_number {
             Some(number) => deployer.call_raw().block(number.into()).await?,
-            None => deployer.call_raw().await?,
+            None => deployer.call_raw().await?
         };
 
         let pool_data_v4 = PoolDataV4::abi_decode(&data)?;
 
         Ok(PoolData {
-            tokenA: pool_key.currency0,
+            tokenA:         pool_key.currency0,
             tokenADecimals: pool_data_v4.token0Decimals,
-            tokenB: pool_key.currency1,
+            tokenB:         pool_key.currency1,
             tokenBDecimals: pool_data_v4.token1Decimals,
-            liquidity: pool_data_v4.liquidity,
-            sqrtPrice: pool_data_v4.sqrtPrice,
-            tick: pool_data_v4.tick,
-            tickSpacing: pool_key.tickSpacing,
-            fee: pool_key.fee,
-            liquidityNet: pool_data_v4.liquidityNet,
+            liquidity:      pool_data_v4.liquidity,
+            sqrtPrice:      pool_data_v4.sqrtPrice,
+            tick:           pool_data_v4.tick,
+            tickSpacing:    pool_key.tickSpacing,
+            fee:            pool_key.fee,
+            liquidityNet:   pool_data_v4.liquidityNet
         })
     }
 
@@ -252,7 +249,7 @@ impl PoolDataLoader for DataLoader {
         num_ticks: u16,
         tick_spacing: I24,
         block_number: Option<BlockNumber>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> Result<(Vec<TickData>, U256), PoolError> {
         let deployer = GetUniswapV4TickData::deploy_builder(
             provider.clone(),
@@ -261,12 +258,12 @@ impl PoolDataLoader for DataLoader {
             zero_for_one,
             current_tick,
             num_ticks,
-            tick_spacing,
+            tick_spacing
         );
 
         let data = match block_number {
             Some(number) => deployer.call_raw().block(number.into()).await?,
-            None => deployer.call_raw().await?,
+            None => deployer.call_raw().await?
         };
 
         let result = TicksWithBlock::abi_decode(&data)?;
@@ -277,7 +274,7 @@ impl PoolDataLoader for DataLoader {
                 .into_iter()
                 .take(result.validTo.to::<usize>())
                 .collect::<Vec<_>>(),
-            result.blockNumber,
+            result.blockNumber
         ))
     }
 
@@ -305,10 +302,7 @@ impl PoolDataLoader for DataLoader {
     }
 
     fn event_signatures() -> Vec<B256> {
-        vec![
-            IUniswapV4Pool::Swap::SIGNATURE_HASH,
-            IUniswapV4Pool::ModifyLiquidity::SIGNATURE_HASH,
-        ]
+        vec![IUniswapV4Pool::Swap::SIGNATURE_HASH, IUniswapV4Pool::ModifyLiquidity::SIGNATURE_HASH]
     }
 
     fn is_swap_event(log: &Log) -> bool {
@@ -323,12 +317,12 @@ impl PoolDataLoader for DataLoader {
     fn decode_swap_event(log: &Log) -> Result<SwapEvent, PoolError> {
         let swap_event = IUniswapV4Pool::Swap::decode_log(log)?;
         Ok(SwapEvent {
-            sender: swap_event.sender,
-            amount0: i128_to_i256(swap_event.amount0),
-            amount1: i128_to_i256(swap_event.amount1),
+            sender:         swap_event.sender,
+            amount0:        i128_to_i256(swap_event.amount0),
+            amount1:        i128_to_i256(swap_event.amount1),
             sqrt_price_x96: U256::from(swap_event.sqrtPriceX96),
-            liquidity: swap_event.liquidity,
-            tick: swap_event.tick.as_i32(),
+            liquidity:      swap_event.liquidity,
+            tick:           swap_event.tick.as_i32()
         })
     }
 }

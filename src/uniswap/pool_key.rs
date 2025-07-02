@@ -1,8 +1,8 @@
-use super::pool::PoolId;
 use alloy::sol_types::SolValue;
 use alloy_primitives::keccak256;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+use super::pool::PoolId;
 
 alloy::sol!(
     type Currency is address;

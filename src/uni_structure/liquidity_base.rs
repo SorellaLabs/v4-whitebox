@@ -9,7 +9,7 @@ use malachite::num::conversion::traits::SaturatingInto;
 use serde::{Deserialize, Serialize};
 use uniswap_v3_math::{
     tick_bitmap::next_initialized_tick_within_one_word,
-    tick_math::{MAX_TICK, MIN_TICK, get_tick_at_sqrt_ratio},
+    tick_math::{MAX_TICK, MIN_TICK, get_tick_at_sqrt_ratio}
 };
 
 use super::tick_info::TickInfo;
@@ -18,14 +18,14 @@ use crate::sqrt_pricex96::SqrtPriceX96;
 /// baseline holder for
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaselineLiquidity {
-    pub(super) tick_spacing: i32,
-    pub(super) start_tick: i32,
+    pub(super) tick_spacing:     i32,
+    pub(super) start_tick:       i32,
     pub(super) start_sqrt_price: SqrtPriceX96,
-    pub(super) start_liquidity: u128,
+    pub(super) start_liquidity:  u128,
     /// should only have ticks that are initialized.
-    initialized_ticks: HashMap<i32, TickInfo>,
+    initialized_ticks:           HashMap<i32, TickInfo>,
     /// should only have ticks that are initialized, i.e have liquidity
-    tick_bitmap: HashMap<i16, U256>,
+    tick_bitmap:                 HashMap<i16, U256>
 }
 
 impl BaselineLiquidity {
@@ -35,7 +35,7 @@ impl BaselineLiquidity {
         start_sqrt_price: SqrtPriceX96,
         start_liquidity: u128,
         initialized_ticks: HashMap<i32, TickInfo>,
-        tick_bitmap: HashMap<i16, U256>,
+        tick_bitmap: HashMap<i16, U256>
     ) -> Self {
         Self {
             start_tick,
@@ -43,7 +43,7 @@ impl BaselineLiquidity {
             start_liquidity,
             initialized_ticks,
             tick_bitmap,
-            tick_spacing,
+            tick_spacing
         }
     }
 
@@ -110,7 +110,7 @@ impl BaselineLiquidity {
             initialized_ticks: &self.initialized_ticks,
             min_tick_init,
             max_tick_init,
-            tick_bitmap: &self.tick_bitmap,
+            tick_bitmap: &self.tick_bitmap
         })
     }
 
@@ -138,7 +138,7 @@ impl BaselineLiquidity {
             initialized_ticks: &self.initialized_ticks,
             min_tick_init,
             max_tick_init,
-            tick_bitmap: &self.tick_bitmap,
+            tick_bitmap: &self.tick_bitmap
         }
     }
 }
@@ -148,14 +148,14 @@ impl BaselineLiquidity {
 
 #[derive(Clone, Debug)]
 pub struct LiquidityAtPoint<'a> {
-    pub(super) tick_spacing: i32,
-    pub(super) current_tick: i32,
+    pub(super) tick_spacing:       i32,
+    pub(super) current_tick:       i32,
     pub(super) current_sqrt_price: SqrtPriceX96,
-    pub(super) current_liquidity: u128,
-    pub(super) max_tick_init: i32,
-    pub(super) min_tick_init: i32,
-    initialized_ticks: &'a HashMap<i32, TickInfo>,
-    tick_bitmap: &'a HashMap<i16, U256>,
+    pub(super) current_liquidity:  u128,
+    pub(super) max_tick_init:      i32,
+    pub(super) min_tick_init:      i32,
+    initialized_ticks:             &'a HashMap<i32, TickInfo>,
+    tick_bitmap:                   &'a HashMap<i16, U256>
 }
 
 impl LiquidityAtPoint<'_> {
@@ -171,19 +171,17 @@ impl LiquidityAtPoint<'_> {
     /// the tick and the liquidity to swap with
     pub fn get_to_next_initialized_tick_within_one_word(
         &self,
-        direction: bool,
+        direction: bool
     ) -> eyre::Result<(i32, u128, bool)> {
         let (tick_next, init) = next_initialized_tick_within_one_word(
             self.tick_bitmap,
             self.current_tick,
             self.tick_spacing,
-            direction,
+            direction
         )?;
 
         if tick_next > self.max_tick_init || tick_next < self.min_tick_init {
-            return Err(eyre::eyre!(
-                "out of initialized tick ranges loaded for uniswap"
-            ));
+            return Err(eyre::eyre!("out of initialized tick ranges loaded for uniswap"));
         }
 
         // adjust self view
@@ -195,13 +193,13 @@ impl LiquidityAtPoint<'_> {
         sqrt_price: U256,
         direction: bool,
         full_range: bool,
-        sqrt_moved: bool,
+        sqrt_moved: bool
     ) -> eyre::Result<()> {
         let (tick_next, init) = next_initialized_tick_within_one_word(
             self.tick_bitmap,
             self.current_tick,
             self.tick_spacing,
-            direction,
+            direction
         )?;
 
         if full_range {
@@ -209,13 +207,7 @@ impl LiquidityAtPoint<'_> {
                 let liq_net = self
                     .initialized_ticks
                     .get(&tick_next)
-                    .map(|info| {
-                        if direction {
-                            -info.liquidity_net
-                        } else {
-                            info.liquidity_net
-                        }
-                    })
+                    .map(|info| if direction { -info.liquidity_net } else { info.liquidity_net })
                     .unwrap_or_default();
 
                 self.current_liquidity = if liq_net < 0 {

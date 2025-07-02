@@ -1,7 +1,7 @@
 use std::{
     iter::Sum,
     ops::{Add, AddAssign, Deref, Sub, SubAssign},
-    sync::OnceLock,
+    sync::OnceLock
 };
 
 use alloy::primitives::{U256, U512, Uint, aliases::U320};
@@ -10,9 +10,9 @@ use malachite::{
     Natural, Rational,
     num::{
         arithmetic::traits::{CeilingRoot, DivRound, Mod, Pow, PowerOf2, SaturatingSub},
-        conversion::traits::{RoundingInto, SaturatingFrom},
+        conversion::traits::{RoundingInto, SaturatingFrom}
     },
-    rounding_modes::RoundingMode,
+    rounding_modes::RoundingMode
 };
 use serde::{Deserialize, Serialize};
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
@@ -198,11 +198,7 @@ impl From<&Ray> for f64 {
 /// here
 fn convert_sqrtpricex96(price: &U160, round_up: bool) -> Ray {
     let p: U320 = price.widening_mul(*price);
-    let rm = if round_up {
-        RoundingMode::Ceiling
-    } else {
-        RoundingMode::Floor
-    };
+    let rm = if round_up { RoundingMode::Ceiling } else { RoundingMode::Floor };
     let numerator = Natural::from_limbs_asc(p.as_limbs()) * const_1e27();
     let (res, _) = numerator.div_round(const_2_192(), rm);
     Ray(U256::from_limbs_slice(&res.into_limbs_asc()))
@@ -223,7 +219,7 @@ impl From<SqrtPriceX96> for Ray {
 impl Serialize for Ray {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: serde::Serializer
     {
         self.0.serialize(serializer)
     }
@@ -232,7 +228,7 @@ impl Serialize for Ray {
 impl<'de> Deserialize<'de> for Ray {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: serde::Deserializer<'de>
     {
         let inner = U256::deserialize(deserializer)?;
         Ok(Self(inner))
@@ -246,10 +242,8 @@ impl Ray {
     /// that we will never overflow or underflow
     pub fn within_sqrt_price_bounds(&self) -> bool {
         let numerator = Natural::from_limbs_asc(self.as_limbs()) * const_2_192();
-        let (res, _) = numerator.div_round(
-            const_1e27(),
-            malachite::rounding_modes::RoundingMode::Ceiling,
-        );
+        let (res, _) =
+            numerator.div_round(const_1e27(), malachite::rounding_modes::RoundingMode::Ceiling);
         let root = res.ceiling_root(2);
         let reslimbs = root.into_limbs_asc();
         let output: U256 = Uint::from_limbs_slice(&reslimbs);
@@ -348,11 +342,7 @@ impl Ray {
     /// where we want to ensure that, depending on the bid/ask nature of the
     /// order, we always round in a direction that is most favorable to us
     pub fn inv_ray_round(&self, round_up: bool) -> Ray {
-        if round_up {
-            self.invert(RoundingMode::Ceiling)
-        } else {
-            self.invert(RoundingMode::Floor)
-        }
+        if round_up { self.invert(RoundingMode::Ceiling) } else { self.invert(RoundingMode::Floor) }
     }
 
     pub fn mul_wad<T: Into<Natural>>(&self, mul: T, decimals: u8) -> Self {
@@ -410,11 +400,7 @@ impl Ray {
     }
 
     pub fn calc_price_generic<T: Into<Natural>>(t0: T, t1: T, round_up: bool) -> Self {
-        let rm = if round_up {
-            RoundingMode::Ceiling
-        } else {
-            RoundingMode::Floor
-        };
+        let rm = if round_up { RoundingMode::Ceiling } else { RoundingMode::Floor };
         Self::calc_price_inner(t0.into(), t1.into(), rm)
     }
 
@@ -439,11 +425,7 @@ impl Ray {
     /// Given a price ration t1/t0 calculates how much t1 would be needed to
     /// output the provided amount of t0 (q).  Rounding determined by parameter
     pub fn quantity(&self, q: u128, round_up: bool) -> u128 {
-        let rm = if round_up {
-            RoundingMode::Ceiling
-        } else {
-            RoundingMode::Floor
-        };
+        let rm = if round_up { RoundingMode::Ceiling } else { RoundingMode::Floor };
         let numerator = Natural::from_limbs_asc(self.0.as_limbs()) * Natural::from(q);
         let (res, _) = numerator.div_round(const_1e27(), rm);
         u128::saturating_from(&res)
@@ -452,11 +434,7 @@ impl Ray {
     /// Given a price ratio t1/t0 calculates how much t0 would be needed to
     /// output the provided amount of t1 (q).  Rounding determined by parameter
     pub fn inverse_quantity(&self, q: u128, round_up: bool) -> u128 {
-        let rm = if round_up {
-            RoundingMode::Ceiling
-        } else {
-            RoundingMode::Floor
-        };
+        let rm = if round_up { RoundingMode::Ceiling } else { RoundingMode::Floor };
         let numerator = Natural::from(q) * const_1e27();
         let denominator = Natural::from_limbs_asc(self.0.as_limbs());
         let (res, _) = numerator.div_round(denominator, rm);

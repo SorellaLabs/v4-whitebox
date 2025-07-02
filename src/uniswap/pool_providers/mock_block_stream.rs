@@ -9,27 +9,23 @@ use crate::uniswap::pool_providers::{PoolManagerError, PoolManagerProvider};
 
 #[derive(Debug, Clone)]
 pub struct MockBlockStream<P> {
-    inner: Arc<P>,
+    inner:      Arc<P>,
     from_block: u64,
-    to_block: u64,
+    to_block:   u64
 }
 
 impl<P> MockBlockStream<P>
 where
-    P: Provider + Unpin + 'static + Clone,
+    P: Provider + Unpin + 'static + Clone
 {
     pub fn new(inner: Arc<P>, from_block: u64, to_block: u64) -> Self {
-        Self {
-            inner,
-            from_block,
-            to_block,
-        }
+        Self { inner, from_block, to_block }
     }
 }
 
 impl<P> PoolManagerProvider for MockBlockStream<P>
 where
-    P: Provider + Unpin + 'static + Clone,
+    P: Provider + Unpin + 'static + Clone
 {
     fn subscribe_blocks(self) -> futures::stream::BoxStream<'static, Option<PoolMangerBlocks>> {
         futures::stream::iter(self.from_block..=self.to_block)
@@ -56,7 +52,7 @@ where
             .iter()
             .map(|alloy_log| Log {
                 address: alloy_log.address(),
-                data: alloy_log.data().clone(),
+                data:    alloy_log.data().clone()
             })
             .collect();
 

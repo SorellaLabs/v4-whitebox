@@ -1,35 +1,31 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{
-    uniswap::pool::PoolId, uniswap::pool_key::PoolKey, uniswap::pool_registry::UniswapPoolRegistry,
-};
 use alloy::{
     primitives::{Address, aliases::U24},
-    providers::Provider,
+    providers::Provider
 };
 use futures::future::join_all;
 
-use super::pool_data_loader::DataLoader;
-use super::{pool::EnhancedUniswapPool, pool_data_loader::PoolDataLoader};
+use super::{
+    pool::EnhancedUniswapPool,
+    pool_data_loader::{DataLoader, PoolDataLoader}
+};
+use crate::uniswap::{pool::PoolId, pool_key::PoolKey, pool_registry::UniswapPoolRegistry};
 
 pub const INITIAL_TICKS_PER_SIDE: u16 = 400;
 
 #[derive(Clone)]
 pub struct V4PoolFactory<P, const TICKS: u16 = INITIAL_TICKS_PER_SIDE> {
-    provider: Arc<P>,
-    registry: UniswapPoolRegistry,
-    pool_manager: Address,
+    provider:     Arc<P>,
+    registry:     UniswapPoolRegistry,
+    pool_manager: Address
 }
 impl<P: Provider + 'static, const TICKS: u16> V4PoolFactory<P, TICKS>
 where
-    DataLoader: PoolDataLoader,
+    DataLoader: PoolDataLoader
 {
     pub fn new(provider: Arc<P>, registry: UniswapPoolRegistry, pool_manager: Address) -> Self {
-        Self {
-            provider,
-            registry,
-            pool_manager,
-        }
+        Self { provider, registry, pool_manager }
     }
 
     /// inits all uniswap pools found in [`UniswapPoolRegistry`]
@@ -46,9 +42,9 @@ where
                     *internal,
                     *pool_id,
                     self.registry.clone(),
-                    self.pool_manager,
+                    self.pool_manager
                 ),
-                TICKS,
+                TICKS
             );
             pool.initialize(Some(block), self.provider.clone())
                 .await
@@ -79,10 +75,10 @@ where
     pub async fn create_new_angstrom_pool(
         &mut self,
         mut pool_key: PoolKey,
-        block: u64,
+        block: u64
     ) -> EnhancedUniswapPool<DataLoader>
     where
-        DataLoader: PoolDataLoader,
+        DataLoader: PoolDataLoader
     {
         // add to registry
         let pub_key = PoolId::from(pool_key.clone());
@@ -104,9 +100,9 @@ where
                 *internal,
                 pub_key,
                 self.registry.clone(),
-                self.pool_manager,
+                self.pool_manager
             ),
-            TICKS,
+            TICKS
         );
         pool.initialize(Some(block), self.provider.clone())
             .await

@@ -5,22 +5,21 @@ use alloy::primitives::{I256, U256};
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
 
 use super::liquidity_base::LiquidityAtPoint;
-use crate::ray::Ray;
-use crate::sqrt_pricex96::SqrtPriceX96;
+use crate::{ray::Ray, sqrt_pricex96::SqrtPriceX96};
 
 const U256_1: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 #[derive(Debug, Clone)]
 pub struct PoolSwap<'a> {
-    pub(super) liquidity: LiquidityAtPoint<'a>,
+    pub(super) liquidity:     LiquidityAtPoint<'a>,
     /// swap to sqrt price limit
-    pub(super) target_price: Option<SqrtPriceX96>,
+    pub(super) target_price:  Option<SqrtPriceX96>,
     /// if its negative, it is an exact out.
     pub(super) target_amount: I256,
     /// zfo = true
-    pub(super) direction: bool,
+    pub(super) direction:     bool,
     // the fee of the pool.
-    pub(super) fee: u32,
+    pub(super) fee:           u32
 }
 
 impl<'a> PoolSwap<'a> {
@@ -43,11 +42,7 @@ impl<'a> PoolSwap<'a> {
 
         let exact_input = self.target_amount.is_positive();
         let sqrt_price_limit_x96 = self.target_price.map(|p| p.into()).unwrap_or_else(|| {
-            if self.direction {
-                MIN_SQRT_RATIO + U256_1
-            } else {
-                MAX_SQRT_RATIO - U256_1
-            }
+            if self.direction { MIN_SQRT_RATIO + U256_1 } else { MAX_SQRT_RATIO - U256_1 }
         });
 
         let mut amount_remaining = self.target_amount;
@@ -82,7 +77,7 @@ impl<'a> PoolSwap<'a> {
                     target_sqrt_ratio,
                     liquidity,
                     amount_remaining,
-                    self.fee,
+                    self.fee
                 )?;
 
             sqrt_price_x96 = new_sqrt_price_x_96;
@@ -108,16 +103,10 @@ impl<'a> PoolSwap<'a> {
                 sqrt_price_x96,
                 self.direction,
                 sqrt_price_x96 == sqrt_price_next_x96,
-                sqrt_price_x96 != sqrt_price_start_x_96,
+                sqrt_price_x96 != sqrt_price_start_x_96
             )?;
 
-            steps.push(PoolSwapStep {
-                end_tick: next_tick,
-                init,
-                liquidity,
-                d_t0,
-                d_t1,
-            });
+            steps.push(PoolSwapStep { end_tick: next_tick, init, liquidity, d_t0, d_t1 });
         }
 
         // the final sqrt price
@@ -138,22 +127,22 @@ impl<'a> PoolSwap<'a> {
             total_d_t0,
             total_d_t1,
             steps,
-            end_liquidity: self.liquidity,
+            end_liquidity: self.liquidity
         })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct PoolSwapResult<'a> {
-    pub fee: u32,
-    pub start_price: SqrtPriceX96,
-    pub start_tick: i32,
-    pub end_price: SqrtPriceX96,
-    pub end_tick: i32,
-    pub total_d_t0: u128,
-    pub total_d_t1: u128,
-    pub steps: Vec<PoolSwapStep>,
-    pub end_liquidity: LiquidityAtPoint<'a>,
+    pub fee:           u32,
+    pub start_price:   SqrtPriceX96,
+    pub start_tick:    i32,
+    pub end_price:     SqrtPriceX96,
+    pub end_tick:      i32,
+    pub total_d_t0:    u128,
+    pub total_d_t1:    u128,
+    pub steps:         Vec<PoolSwapStep>,
+    pub end_liquidity: LiquidityAtPoint<'a>
 }
 
 impl<'a> PoolSwapResult<'a> {
@@ -161,14 +150,14 @@ impl<'a> PoolSwapResult<'a> {
     pub fn swap_to_amount(
         &'a self,
         amount: I256,
-        direction: bool,
+        direction: bool
     ) -> eyre::Result<PoolSwapResult<'a>> {
         PoolSwap {
             liquidity: self.end_liquidity.clone(),
             target_price: None,
             direction,
             target_amount: amount,
-            fee: 0,
+            fee: 0
         }
         .swap()
     }
@@ -181,15 +170,11 @@ impl<'a> PoolSwapResult<'a> {
             target_price: Some(price_limit),
             direction,
             target_amount: I256::MAX,
-            fee: 0,
+            fee: 0
         }
         .swap()?;
 
-        let amount_in = if direction {
-            price_swap.total_d_t0
-        } else {
-            price_swap.total_d_t1
-        };
+        let amount_in = if direction { price_swap.total_d_t0 } else { price_swap.total_d_t1 };
         let amount = I256::unchecked_from(amount_in);
 
         self.swap_to_amount(amount, direction)
@@ -226,30 +211,22 @@ impl<'a> PoolSwapResult<'a> {
     }
 
     pub fn input(&self) -> u128 {
-        if self.zero_for_one() {
-            self.total_d_t0
-        } else {
-            self.total_d_t1
-        }
+        if self.zero_for_one() { self.total_d_t0 } else { self.total_d_t1 }
     }
 
     pub fn output(&self) -> u128 {
-        if self.zero_for_one() {
-            self.total_d_t1
-        } else {
-            self.total_d_t0
-        }
+        if self.zero_for_one() { self.total_d_t1 } else { self.total_d_t0 }
     }
 }
 
 /// the step of swapping across this pool
 #[derive(Clone, Debug)]
 pub struct PoolSwapStep {
-    end_tick: i32,
-    init: bool,
+    end_tick:  i32,
+    init:      bool,
     liquidity: u128,
-    d_t0: u128,
-    d_t1: u128,
+    d_t0:      u128,
+    d_t1:      u128
 }
 
 impl PoolSwapStep {
@@ -257,10 +234,7 @@ impl PoolSwapStep {
         if self.empty() {
             None
         } else {
-            Some(Ray::calc_price(
-                U256::from(self.d_t0),
-                U256::from(self.d_t1),
-            ))
+            Some(Ray::calc_price(U256::from(self.d_t0), U256::from(self.d_t1)))
         }
     }
 

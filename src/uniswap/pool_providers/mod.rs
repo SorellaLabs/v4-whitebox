@@ -10,7 +10,7 @@ pub enum PoolManagerError {
     #[error("Generic pool manager error")]
     Generic,
     #[error("Transport error: {0}")]
-    Transport(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    Transport(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>)
 }
 pub mod mock_block_stream;
 pub mod provider_adapter;
@@ -25,5 +25,5 @@ pub trait PoolManagerProvider: Send + Sync + Clone + Unpin {
 #[derive(Debug, Clone)]
 pub enum PoolMangerBlocks {
     NewBlock(u64),
-    Reorg(u64, RangeInclusive<u64>),
+    Reorg(u64, RangeInclusive<u64>)
 }

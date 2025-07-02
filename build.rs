@@ -34,7 +34,7 @@ fn main() {
 
     // Try to find forge in common locations
     let forge_paths = [
-        "forge", // Check PATH first
+        "forge" // Check PATH first
     ];
 
     let mut forge_cmd = None;

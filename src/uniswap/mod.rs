@@ -37,11 +37,7 @@ fn i32_to_i24(val: i32) -> Result<I24, ConversionError> {
 fn i128_to_i256(value: i128) -> I256 {
     let mut bytes = [0u8; I256::BYTES];
     let value_bytes = value.to_be_bytes();
-    let signed_byte = if (value_bytes[0] & 0x80) == 0x80 {
-        0xFF
-    } else {
-        0x00
-    };
+    let signed_byte = if (value_bytes[0] & 0x80) == 0x80 { 0xFF } else { 0x00 };
     bytes[..16].fill(signed_byte);
     bytes[16..].copy_from_slice(&value_bytes);
     I256::from_be_bytes(bytes)
@@ -52,7 +48,7 @@ pub enum ConversionError {
     #[error("overflow from i32 to i24 {0:?}")]
     OverflowErrorI24(i32),
     #[error("overflow from I256 to I128 {0:?}")]
-    OverflowErrorI28(I256),
+    OverflowErrorI28(I256)
 }
 
 #[cfg(test)]
@@ -82,7 +78,7 @@ mod tests {
             1024_i32,
             1000_i32,
             -1000_i32,
-            I24::MAX.as_i32() - 1,
+            I24::MAX.as_i32() - 1
         ];
         for &original in test_values.iter() {
             let converted = i32_to_i24(original).unwrap();

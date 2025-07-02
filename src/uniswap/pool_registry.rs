@@ -1,12 +1,13 @@
-use super::pool::PoolId;
-use super::pool_key::PoolKey;
-use alloy::primitives::aliases::U24;
 use std::collections::HashMap;
+
+use alloy::primitives::aliases::U24;
+
+use super::{pool::PoolId, pool_key::PoolKey};
 
 #[derive(Debug, Default, Clone)]
 pub struct UniswapPoolRegistry {
-    pub pools: HashMap<PoolId, PoolKey>,
-    pub conversion_map: HashMap<PoolId, PoolId>,
+    pub pools:          HashMap<PoolId, PoolKey>,
+    pub conversion_map: HashMap<PoolId, PoolId>
 }
 
 impl UniswapPoolRegistry {
@@ -46,9 +47,6 @@ impl From<Vec<PoolKey>> for UniswapPoolRegistry {
                 (pool_id_pub, pool_id_priv)
             })
             .collect();
-        Self {
-            pools: pubmap,
-            conversion_map: priv_map,
-        }
+        Self { pools: pubmap, conversion_map: priv_map }
     }
 }

@@ -1,45 +1,45 @@
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Rem, sync::Arc};
 
-use crate::uni_structure::tick_info::TickInfo;
-
-use crate::uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity};
 use alloy::{
     hex,
     primitives::{Address, B256, BlockNumber, I256, U256, aliases::I24},
     providers::Provider,
-    transports::Transport,
+    transports::Transport
 };
 use alloy_primitives::FixedBytes;
 use itertools::Itertools;
 use thiserror::Error;
 use uniswap_v3_math::{
     error::UniswapV3MathError,
-    tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK},
+    tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK}
 };
 
 use super::pool_data_loader::PoolData;
+use crate::uni_structure::{
+    BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo
+};
 // use super::pool_manager::TickRangeToLoad;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TickRangeToLoad {
-    pub pool_id: PoolId,
+    pub pool_id:    PoolId,
     pub start_tick: i32,
-    pub zfo: bool,
-    pub tick_count: u16,
+    pub zfo:        bool,
+    pub tick_count: u16
 }
 use crate::uniswap::{
     ConversionError, i32_to_i24,
-    pool_data_loader::{DataLoader, PoolDataLoader, TickData},
+    pool_data_loader::{DataLoader, PoolDataLoader, TickData}
 };
 
 pub type PoolId = FixedBytes<32>;
 #[derive(Default)]
 pub struct SwapResult {
-    pub amount0: I256,
-    pub amount1: I256,
+    pub amount0:         I256,
+    pub amount1:         I256,
     pub sqrt_price_x_96: U256,
-    pub liquidity: u128,
-    pub tick: i32,
+    pub liquidity:       u128,
+    pub tick:            i32
 }
 
 // at around 190 is when "max code size exceeded" comes up
@@ -51,27 +51,27 @@ const TICKS_PER_BATCH: usize = 25;
 
 #[derive(Debug, Clone, Default)]
 pub struct EnhancedUniswapPool<Loader: PoolDataLoader = DataLoader> {
-    sync_swap_with_sim: bool,
+    sync_swap_with_sim:     bool,
     initial_ticks_per_side: u16,
-    pub data_loader: Loader,
-    pub token0: Address,
-    pub token0_decimals: u8,
-    pub token1: Address,
-    pub token1_decimals: u8,
-    pub block_number: u64,
-    pub liquidity: u128,
-    pub liquidity_net: i128,
-    pub sqrt_price_x96: U256,
-    pub book_fee: u32,
-    pub tick: i32,
-    pub tick_spacing: i32,
-    pub tick_bitmap: HashMap<i16, U256>,
-    pub ticks: HashMap<i32, TickInfo>,
+    pub data_loader:        Loader,
+    pub token0:             Address,
+    pub token0_decimals:    u8,
+    pub token1:             Address,
+    pub token1_decimals:    u8,
+    pub block_number:       u64,
+    pub liquidity:          u128,
+    pub liquidity_net:      i128,
+    pub sqrt_price_x96:     U256,
+    pub book_fee:           u32,
+    pub tick:               i32,
+    pub tick_spacing:       i32,
+    pub tick_bitmap:        HashMap<i16, U256>,
+    pub ticks:              HashMap<i32, TickInfo>
 }
 
 impl<Loader> EnhancedUniswapPool<Loader>
 where
-    Loader: PoolDataLoader + Default,
+    Loader: PoolDataLoader + Default
 {
     pub fn new(data_loader: Loader, initial_ticks_per_side: u16) -> Self {
         Self {
@@ -97,7 +97,7 @@ where
     pub async fn pool_data_for_block<T: Transport + Clone>(
         &self,
         block_number: BlockNumber,
-        provider: Arc<impl Provider>,
+        provider: Arc<impl Provider>
     ) -> Result<PoolData, PoolError> {
         self.data_loader
             .load_pool_data(Some(block_number), provider)
@@ -131,18 +131,18 @@ where
                     self.sqrt_price_x96.into(),
                     self.liquidity,
                     self.ticks.clone(),
-                    self.tick_bitmap.clone(),
+                    self.tick_bitmap.clone()
                 ),
                 self.block_number,
-                self.book_fee,
-            ),
+                self.book_fee
+            )
         ))
     }
 
     pub async fn initialize(
         &mut self,
         block_number: Option<BlockNumber>,
-        provider: Arc<impl Provider>,
+        provider: Arc<impl Provider>
     ) -> Result<(), PoolError> {
         tracing::trace!(?block_number, "populating pool data");
         self.populate_data(block_number, provider.clone()).await?;
@@ -155,7 +155,7 @@ where
     pub async fn update_to_block<P: Provider>(
         &mut self,
         block_number: Option<BlockNumber>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> Result<(), PoolError> {
         self.populate_data(block_number, provider.clone()).await?;
         self.sync_ticks(block_number, provider.clone()).await?;
@@ -180,7 +180,7 @@ where
         zero_for_one: bool,
         num_ticks: u16,
         block_number: Option<BlockNumber>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> Result<(Vec<TickData>, U256), PoolError> {
         let (tick_data, block_number) = self
             .data_loader
@@ -190,7 +190,7 @@ where
                 num_ticks,
                 i32_to_i24(self.tick_spacing)?,
                 block_number,
-                provider.clone(),
+                provider.clone()
             )
             .await?;
 
@@ -209,10 +209,10 @@ where
                 self.ticks.insert(
                     tick.tick.as_i32(),
                     TickInfo {
-                        initialized: tick.initialized,
+                        initialized:     tick.initialized,
                         liquidity_gross: tick.liquidityGross,
-                        liquidity_net: tick.liquidityNet,
-                    },
+                        liquidity_net:   tick.liquidityNet
+                    }
                 );
 
                 // only flip initalized ticks.
@@ -226,7 +226,7 @@ where
         &mut self,
         tick_data: TickRangeToLoad,
         block_number: Option<BlockNumber>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> Result<(), PoolError> {
         let ticks = self
             .get_tick_data_batch_request(
@@ -234,7 +234,7 @@ where
                 tick_data.zfo,
                 tick_data.tick_count,
                 block_number,
-                provider,
+                provider
             )
             .await?
             .0;
@@ -248,7 +248,7 @@ where
     async fn sync_ticks<P: Provider>(
         &mut self,
         block_number: Option<u64>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> Result<(), PoolError> {
         if !self.data_is_populated() {
             return Err(PoolError::PoolAlreadyInitialized);
@@ -277,7 +277,7 @@ where
         &self,
         provider: Arc<P>,
         block_number: Option<u64>,
-        direction: bool,
+        direction: bool
     ) -> Result<(i32, i32, Vec<TickData>), PoolError> {
         let extra = (self.tick.rem(self.tick_spacing) == 0i32) as u8;
         // true = zfo
@@ -298,7 +298,7 @@ where
                     direction,
                     TICKS_PER_BATCH as u16,
                     block_number,
-                    provider.clone(),
+                    provider.clone()
                 )
                 .await?
                 .0;
@@ -336,7 +336,7 @@ where
         match shift.cmp(&0) {
             Ordering::Less => 1.0001_f64.powi(tick) / 10_f64.powi(-shift as i32),
             Ordering::Greater => 1.0001_f64.powi(tick) * 10_f64.powi(shift as i32),
-            Ordering::Equal => 1.0001_f64.powi(tick),
+            Ordering::Equal => 1.0001_f64.powi(tick)
         }
     }
 
@@ -346,7 +346,7 @@ where
         match shift.cmp(&0) {
             Ordering::Less => 1.0001_f64.powi(tick) / 10_f64.powi(-shift as i32),
             Ordering::Greater => 1.0001_f64.powi(tick) * 10_f64.powi(shift as i32),
-            Ordering::Equal => 1.0001_f64.powi(tick),
+            Ordering::Equal => 1.0001_f64.powi(tick)
         }
     }
 
@@ -368,7 +368,7 @@ where
         token_in: Address,
         amount_specified: I256,
         sqrt_price_limit_x96: Option<U256>,
-        with_fee: bool,
+        with_fee: bool
     ) -> Result<SwapResult, SwapSimulationError> {
         if amount_specified.is_zero() {
             return Err(SwapSimulationError::ZeroAmountSpecified);
@@ -399,11 +399,7 @@ where
         let mut sqrt_price_x_96 = self.sqrt_price_x96;
         let mut tick = self.tick;
         let mut liquidity = self.liquidity;
-        let fee = if with_fee {
-            self.book_fee
-        } else {
-            Default::default()
-        };
+        let fee = if with_fee { self.book_fee } else { Default::default() };
 
         tracing::trace!(
             token_in = ?token_in,
@@ -428,7 +424,7 @@ where
                     &self.tick_bitmap,
                     tick,
                     self.tick_spacing,
-                    zero_for_one,
+                    zero_for_one
                 )?;
 
             let tick_next = tick_next.clamp(MIN_TICK, MAX_TICK);
@@ -449,7 +445,7 @@ where
                     target_sqrt_ratio,
                     liquidity,
                     amount_specified_remaining,
-                    fee,
+                    fee
                 )?;
 
             sqrt_price_x_96 = new_sqrt_price_x_96;
@@ -464,17 +460,13 @@ where
 
             if sqrt_price_x_96 == sqrt_price_next_x96 {
                 if initialized {
-                    let liquidity_net = self
-                        .ticks
-                        .get(&tick_next)
-                        .map(|info| {
-                            if zero_for_one {
-                                -info.liquidity_net
-                            } else {
-                                info.liquidity_net
-                            }
-                        })
-                        .unwrap_or_default();
+                    let liquidity_net =
+                        self.ticks
+                            .get(&tick_next)
+                            .map(|info| {
+                                if zero_for_one { -info.liquidity_net } else { info.liquidity_net }
+                            })
+                            .unwrap_or_default();
 
                     liquidity = if liquidity_net < 0 {
                         liquidity
@@ -485,11 +477,7 @@ where
                     };
                 }
 
-                tick = if zero_for_one {
-                    tick_next - 1
-                } else {
-                    tick_next
-                };
+                tick = if zero_for_one { tick_next - 1 } else { tick_next };
             } else if sqrt_price_x_96 != sqrt_price_start_x_96 {
                 tick = uniswap_v3_math::tick_math::get_tick_at_sqrt_ratio(sqrt_price_x_96)?;
             }
@@ -512,31 +500,19 @@ where
         }
 
         let (amount0, amount1) = if zero_for_one == exact_input {
-            (
-                amount_specified - amount_specified_remaining,
-                amount_calculated,
-            )
+            (amount_specified - amount_specified_remaining, amount_calculated)
         } else {
-            (
-                amount_calculated,
-                amount_specified - amount_specified_remaining,
-            )
+            (amount_calculated, amount_specified - amount_specified_remaining)
         };
 
-        Ok(SwapResult {
-            amount0,
-            amount1,
-            liquidity,
-            sqrt_price_x_96,
-            tick,
-        })
+        Ok(SwapResult { amount0, amount1, liquidity, sqrt_price_x_96, tick })
     }
 
     pub fn simulate_swap(
         &self,
         token_in: Address,
         amount_specified: I256,
-        sqrt_price_limit_x96: Option<U256>,
+        sqrt_price_limit_x96: Option<U256>
     ) -> Result<(I256, I256), SwapSimulationError> {
         let swap_result =
             self._simulate_swap(token_in, amount_specified, sqrt_price_limit_x96, false)?;
@@ -546,7 +522,7 @@ where
     pub async fn populate_data<P: Provider>(
         &mut self,
         block_number: Option<u64>,
-        provider: Arc<P>,
+        provider: Arc<P>
     ) -> Result<(), PoolError> {
         let pool_data = self
             .data_loader
@@ -663,11 +639,7 @@ where
     }
 
     pub fn get_token_out(&self, token_in: Address) -> Address {
-        if self.token0 == token_in {
-            self.token1
-        } else {
-            self.token0
-        }
+        if self.token0 == token_in { self.token1 } else { self.token0 }
     }
 
     pub fn calculate_word_pos_bit_pos(compressed: i32) -> (i16, u8) {
@@ -696,7 +668,7 @@ pub enum SwapSimulationError {
     #[error("Invalid sqrt price limit")]
     InvalidSqrtPriceLimit,
     #[error("Amount specified must be non-zero")]
-    ZeroAmountSpecified,
+    ZeroAmountSpecified
 }
 #[derive(Error, Debug)]
 pub enum PoolError {
@@ -717,7 +689,7 @@ pub enum PoolError {
     #[error(transparent)]
     ConversionError(#[from] ConversionError),
     #[error(transparent)]
-    Eyre(#[from] eyre::Error),
+    Eyre(#[from] eyre::Error)
 }
 
 impl<I: Iterator<Item = TickData>> TickSpaceFill for I {}
@@ -726,10 +698,10 @@ pub trait TickSpaceFill: Iterator<Item = TickData> {
     fn fill_in_missing_ticks(
         mut self,
         zfo: bool,
-        tick_spacing: i32,
+        tick_spacing: i32
     ) -> impl Iterator<Item = (bool, TickData)>
     where
-        Self: Sized + Iterator<Item = TickData>,
+        Self: Sized + Iterator<Item = TickData>
     {
         let mut result = Vec::new();
         // now that we grabbed start, what we want to do is
@@ -750,14 +722,14 @@ pub trait TickSpaceFill: Iterator<Item = TickData> {
             let mut cnt = tick_spacing;
             while diff != tick_spacing {
                 let new_tick = TickData {
-                    tick: if zfo {
+                    tick:           if zfo {
                         current.tick - I24::unchecked_from(cnt)
                     } else {
                         current.tick + I24::unchecked_from(cnt)
                     },
-                    initialized: false,
+                    initialized:    false,
                     liquidityGross: 0,
-                    liquidityNet: 0,
+                    liquidityNet:   0
                 };
                 result.push((false, new_tick));
 
@@ -792,7 +764,7 @@ mod tests {
                     EnvFilter::from_default_env()
                         .add_directive("uniswap_v4=debug".parse().unwrap())
                         .add_directive("angstrom_types=debug".parse().unwrap())
-                        .add_directive("test=debug".parse().unwrap()),
+                        .add_directive("test=debug".parse().unwrap())
                 )
                 .try_init();
         });
@@ -809,7 +781,7 @@ mod tests {
             _: u16,
             _: I24,
             _: Option<BlockNumber>,
-            _: Arc<P>,
+            _: Arc<P>
         ) -> Result<(Vec<TickData>, U256), PoolError> {
             unimplemented!()
         }
@@ -817,7 +789,7 @@ mod tests {
         async fn load_pool_data<P: Provider>(
             &self,
             _: Option<BlockNumber>,
-            _: Arc<P>,
+            _: Arc<P>
         ) -> Result<PoolData, PoolError> {
             unimplemented!()
         }
@@ -1017,22 +989,13 @@ mod tests {
 
         // Test zero amount
         let result = pool.simulate_swap(pool.token0, I256::ZERO, None);
-        assert!(matches!(
-            result,
-            Err(SwapSimulationError::ZeroAmountSpecified)
-        ));
+        assert!(matches!(result, Err(SwapSimulationError::ZeroAmountSpecified)));
 
         // Test invalid sqrt price limit
         let invalid_price = MAX_SQRT_RATIO;
-        let result = pool.simulate_swap(
-            pool.token0,
-            I256::try_from(1000i32).unwrap(),
-            Some(invalid_price),
-        );
-        assert!(matches!(
-            result,
-            Err(SwapSimulationError::InvalidSqrtPriceLimit)
-        ));
+        let result =
+            pool.simulate_swap(pool.token0, I256::try_from(1000i32).unwrap(), Some(invalid_price));
+        assert!(matches!(result, Err(SwapSimulationError::InvalidSqrtPriceLimit)));
     }
 
     #[test]
