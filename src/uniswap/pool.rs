@@ -749,7 +749,7 @@ mod tests {
     use std::sync::Once;
 
     use alloy::primitives::Log;
-    use tracing_subscriber::{EnvFilter, fmt};
+    use tracing_subscriber::fmt;
     use uniswap_v3_math::tick_math::get_sqrt_ratio_at_tick;
 
     use super::*;
@@ -759,14 +759,7 @@ mod tests {
 
     fn setup_tracing() {
         INIT.call_once(|| {
-            let _ = fmt()
-                .with_env_filter(
-                    EnvFilter::from_default_env()
-                        .add_directive("uniswap_v4=debug".parse().unwrap())
-                        .add_directive("angstrom_types=debug".parse().unwrap())
-                        .add_directive("test=debug".parse().unwrap())
-                )
-                .try_init();
+            let _ = fmt().try_init();
         });
     }
 

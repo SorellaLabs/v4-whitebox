@@ -4,12 +4,13 @@ use alloy_primitives::{I256, aliases::I24};
 use malachite::num::arithmetic::traits::Sign;
 use thiserror::Error;
 
+pub mod fetch_pool_keys;
 pub mod loaders;
 pub mod pool;
 pub mod pool_data_loader;
 pub mod pool_factory;
 pub mod pool_key;
-// pub mod pool_manager;
+pub mod pool_manager_service;
 pub mod pool_providers;
 pub mod pool_registry;
 

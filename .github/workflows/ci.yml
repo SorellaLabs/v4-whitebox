@@ -87,7 +87,7 @@ jobs:
           ${{ runner.os }}-cargo-
 
     - name: Build
-      run: cargo build --verbose
+      run: cargo build
 
   test:
     name: Test
@@ -117,4 +117,39 @@ jobs:
           ${{ runner.os }}-cargo-
 
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
+      env:
+        SKIP_INTEGRATION_TESTS: true
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: nightly
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Run integration tests
+      run: cargo test --features integration
+      env:
+        SKIP_INTEGRATION_TESTS: false
