@@ -134,7 +134,13 @@ where
                     self.tick_bitmap.clone()
                 ),
                 self.block_number,
-                self.book_fee
+                crate::uni_structure::FeeConfiguration {
+                    is_bundle_mode: false,         // Default to unlocked mode
+                    bundle_fee:     self.book_fee, // Store original fee as bundle fee
+                    swap_fee:       self.book_fee, // Use same fee for swap fee
+                    protocol_fee:   500            /* Mock protocol fee (0.05% in basis points
+                                                    * of 1e6) */
+                }
             )
         ))
     }

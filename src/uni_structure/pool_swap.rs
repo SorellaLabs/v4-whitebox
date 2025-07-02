@@ -4,7 +4,7 @@ use alloy::primitives::{I256, U256};
 // use itertools::Itertools;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
 
-use super::liquidity_base::LiquidityAtPoint;
+use super::{FeeConfiguration, liquidity_base::LiquidityAtPoint};
 use crate::{ray::Ray, sqrt_pricex96::SqrtPriceX96};
 
 const U256_1: U256 = U256::from_limbs([1, 0, 0, 0]);
@@ -18,8 +18,8 @@ pub struct PoolSwap<'a> {
     pub(super) target_amount: I256,
     /// zfo = true
     pub(super) direction:     bool,
-    // the fee of the pool.
-    pub(super) fee:           u32
+    // the fee configuration of the pool.
+    pub(super) fee_config:    FeeConfiguration
 }
 
 impl<'a> PoolSwap<'a> {
@@ -71,13 +71,17 @@ impl<'a> PoolSwap<'a> {
                 sqrt_price_next_x96
             };
 
+            // Use 0 fee for bundle mode, swap_fee for unlocked mode
+            let swap_fee =
+                if self.fee_config.is_bundle_mode { 0 } else { self.fee_config.swap_fee };
+
             let (new_sqrt_price_x_96, amount_in, amount_out, fee_amount) =
                 uniswap_v3_math::swap_math::compute_swap_step(
                     sqrt_price_x96,
                     target_sqrt_ratio,
                     liquidity,
                     amount_remaining,
-                    self.fee
+                    swap_fee
                 )?;
 
             sqrt_price_x96 = new_sqrt_price_x_96;
@@ -118,8 +122,25 @@ impl<'a> PoolSwap<'a> {
             (t0, t1)
         });
 
+        // Calculate protocol fee for unlocked mode
+        let (protocol_fee_amount, protocol_fee_token) = if !self.fee_config.is_bundle_mode {
+            // In unlocked mode, apply protocol fee to the input amount
+            let input_amount = if self.direction { total_d_t0 } else { total_d_t1 };
+            let protocol_fee_token = if self.direction { 0 } else { 1 }; // 0 for token0, 1 for token1
+
+            // Calculate protocol fee: input_amount * protocol_fee / 1_000_000
+            // protocol_fee is in basis points of 1e6 (e.g., 500 = 0.05%)
+            let protocol_fee_amount =
+                (input_amount as u64 * self.fee_config.protocol_fee as u64 / 1_000_000) as u128;
+
+            (protocol_fee_amount, protocol_fee_token)
+        } else {
+            // In bundle mode, no protocol fee is applied during swap
+            (0, 0)
+        };
+
         Ok(PoolSwapResult {
-            fee: self.fee,
+            fee_config: self.fee_config,
             start_price: range_start,
             start_tick: range_start_tick,
             end_price: self.liquidity.current_sqrt_price,
@@ -127,22 +148,26 @@ impl<'a> PoolSwap<'a> {
             total_d_t0,
             total_d_t1,
             steps,
-            end_liquidity: self.liquidity
+            end_liquidity: self.liquidity,
+            protocol_fee_amount,
+            protocol_fee_token
         })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct PoolSwapResult<'a> {
-    pub fee:           u32,
-    pub start_price:   SqrtPriceX96,
-    pub start_tick:    i32,
-    pub end_price:     SqrtPriceX96,
-    pub end_tick:      i32,
-    pub total_d_t0:    u128,
-    pub total_d_t1:    u128,
-    pub steps:         Vec<PoolSwapStep>,
-    pub end_liquidity: LiquidityAtPoint<'a>
+    pub fee_config:          FeeConfiguration,
+    pub start_price:         SqrtPriceX96,
+    pub start_tick:          i32,
+    pub end_price:           SqrtPriceX96,
+    pub end_tick:            i32,
+    pub total_d_t0:          u128,
+    pub total_d_t1:          u128,
+    pub steps:               Vec<PoolSwapStep>,
+    pub end_liquidity:       LiquidityAtPoint<'a>,
+    pub protocol_fee_amount: u128,
+    pub protocol_fee_token:  u32 // 0 for token0, 1 for token1
 }
 
 impl<'a> PoolSwapResult<'a> {
@@ -157,7 +182,7 @@ impl<'a> PoolSwapResult<'a> {
             target_price: None,
             direction,
             target_amount: amount,
-            fee: 0
+            fee_config: self.fee_config.clone()
         }
         .swap()
     }
@@ -170,7 +195,7 @@ impl<'a> PoolSwapResult<'a> {
             target_price: Some(price_limit),
             direction,
             target_amount: I256::MAX,
-            fee: 0
+            fee_config: self.fee_config.clone()
         }
         .swap()?;
 

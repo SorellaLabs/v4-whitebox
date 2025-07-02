@@ -44,7 +44,8 @@ where
     controller_address: Address,
     deploy_block:       u64,
     pools:              HashMap<PoolId, PoolInfo>,
-    current_block:      u64
+    current_block:      u64,
+    is_bundle_mode:     bool
 }
 
 impl<P> PoolManagerService<P>
@@ -58,7 +59,8 @@ where
         angstrom_address: Address,
         controller_address: Address,
         pool_manager_address: Address,
-        deploy_block: u64
+        deploy_block: u64,
+        is_bundle_mode: bool
     ) -> Result<Self, PoolManagerServiceError> {
         // Set the controller address for the fetch_pool_keys module
         set_controller_address(controller_address);
@@ -75,7 +77,8 @@ where
             controller_address,
             deploy_block,
             pools: HashMap::new(),
-            current_block: deploy_block
+            current_block: deploy_block,
+            is_bundle_mode
         };
 
         // Initialize the service immediately
@@ -112,7 +115,7 @@ where
             // Use the factory to create and initialize the pool
             let (baseline_state, token0, token1) = self
                 .factory
-                .create_new_baseline_angstrom_pool(pool_key, current_block)
+                .create_new_baseline_angstrom_pool(pool_key, current_block, self.is_bundle_mode)
                 .await?;
 
             let pool_info = PoolInfo { baseline_state, token0, token1 };
@@ -207,7 +210,7 @@ where
         // Create new pool using the factory
         let (baseline_state, token0, token1) = self
             .factory
-            .create_new_baseline_angstrom_pool(pool_key, block_number)
+            .create_new_baseline_angstrom_pool(pool_key, block_number, self.is_bundle_mode)
             .await?;
 
         let pool_info = PoolInfo { baseline_state, token0, token1 };
@@ -307,7 +310,8 @@ mod tests {
             angstrom_addr,
             controller_addr,
             pool_manager_addr,
-            deploy_block
+            deploy_block,
+            false // Default to unlocked mode for tests
         )
         .await;
 
@@ -376,7 +380,8 @@ mod tests {
             address!("0x1111111111111111111111111111111111111111"),
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
-            deploy_block
+            deploy_block,
+            false // Default to unlocked mode for tests
         )
         .await;
 

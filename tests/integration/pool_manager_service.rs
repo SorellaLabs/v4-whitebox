@@ -326,7 +326,8 @@ mod pool_discovery_tests {
             SepoliaConfig::ANGSTROM_ADDRESS,
             SepoliaConfig::CONTROLLER_V1_ADDRESS,
             SepoliaConfig::POOL_MANAGER_ADDRESS,
-            recent_block
+            recent_block,
+            false // Use unlocked mode for integration test
         )
         .await
         .expect("Failed to create service");

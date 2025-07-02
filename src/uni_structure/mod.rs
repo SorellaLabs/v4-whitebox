@@ -4,6 +4,15 @@ use pool_swap::{PoolSwap, PoolSwapResult};
 use serde::{Deserialize, Serialize};
 use sqrt_pricex96::SqrtPriceX96;
 
+/// Fee configuration for different pool modes
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeeConfiguration {
+    pub is_bundle_mode: bool,
+    pub bundle_fee:     u32, // Stored fee for bundle mode
+    pub swap_fee:       u32, // Applied during swaps in unlocked mode
+    pub protocol_fee:   u32  // Applied after swaps in unlocked mode (basis points in 1e6)
+}
+
 pub mod liquidity_base;
 pub mod pool_swap;
 pub mod ray;
@@ -12,14 +21,14 @@ pub mod tick_info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaselinePoolState {
-    liquidity: BaselineLiquidity,
-    block:     u64,
-    fee:       u32
+    liquidity:  BaselineLiquidity,
+    block:      u64,
+    fee_config: FeeConfiguration
 }
 
 impl BaselinePoolState {
-    pub fn new(liquidity: BaselineLiquidity, block: u64, fee: u32) -> Self {
-        Self { liquidity, fee, block }
+    pub fn new(liquidity: BaselineLiquidity, block: u64, fee_config: FeeConfiguration) -> Self {
+        Self { liquidity, block, fee_config }
     }
 
     pub fn block_number(&self) -> u64 {
@@ -27,7 +36,31 @@ impl BaselinePoolState {
     }
 
     pub fn fee(&self) -> u32 {
-        self.fee
+        if self.fee_config.is_bundle_mode {
+            self.fee_config.bundle_fee
+        } else {
+            self.fee_config.swap_fee
+        }
+    }
+
+    pub fn is_bundle_mode(&self) -> bool {
+        self.fee_config.is_bundle_mode
+    }
+
+    pub fn bundle_fee(&self) -> u32 {
+        self.fee_config.bundle_fee
+    }
+
+    pub fn swap_fee(&self) -> u32 {
+        self.fee_config.swap_fee
+    }
+
+    pub fn protocol_fee(&self) -> u32 {
+        self.fee_config.protocol_fee
+    }
+
+    pub fn fee_config(&self) -> &FeeConfiguration {
+        &self.fee_config
     }
 
     pub fn current_tick(&self) -> i32 {
@@ -48,15 +81,17 @@ impl BaselinePoolState {
 
     pub fn noop(&self) -> PoolSwapResult<'_> {
         PoolSwapResult {
-            fee:           self.fee,
-            start_price:   self.liquidity.start_sqrt_price,
-            start_tick:    self.liquidity.start_tick,
-            end_price:     self.liquidity.start_sqrt_price,
-            end_tick:      self.liquidity.start_tick,
-            total_d_t0:    0,
-            total_d_t1:    0,
-            steps:         vec![],
-            end_liquidity: self.liquidity.current()
+            fee_config:          self.fee_config.clone(),
+            start_price:         self.liquidity.start_sqrt_price,
+            start_tick:          self.liquidity.start_tick,
+            end_price:           self.liquidity.start_sqrt_price,
+            end_tick:            self.liquidity.start_tick,
+            total_d_t0:          0,
+            total_d_t1:          0,
+            steps:               vec![],
+            end_liquidity:       self.liquidity.current(),
+            protocol_fee_amount: 0,
+            protocol_fee_token:  0
         }
     }
 
@@ -67,8 +102,14 @@ impl BaselinePoolState {
     ) -> eyre::Result<PoolSwapResult<'_>> {
         let liq = self.liquidity.current();
 
-        PoolSwap { liquidity: liq, target_amount: amount, target_price: None, direction, fee: 0 }
-            .swap()
+        PoolSwap {
+            liquidity: liq,
+            target_amount: amount,
+            target_price: None,
+            direction,
+            fee_config: self.fee_config.clone()
+        }
+        .swap()
     }
 
     /// Swap to current price is designed to represent all swap outcomes as an
@@ -86,7 +127,7 @@ impl BaselinePoolState {
             target_amount: I256::MAX,
             target_price: Some(price_limit),
             direction,
-            fee: 0
+            fee_config: self.fee_config.clone()
         }
         .swap()?;
 
@@ -109,7 +150,7 @@ impl BaselinePoolState {
             target_amount: I256::MAX,
             target_price: Some(price_limit),
             direction,
-            fee: 0
+            fee_config: self.fee_config.clone()
         }
         .swap()
     }

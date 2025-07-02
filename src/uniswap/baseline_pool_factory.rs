@@ -58,7 +58,7 @@ where
                 .get(pool_id)
                 .expect("factory conversion map failure");
 
-            self.create_baseline_pool_from_registry(*internal, *pool_id, block)
+            self.create_baseline_pool_from_registry(*internal, *pool_id, block, false) // Default to unlocked mode
                 .await
                 .expect("failed to init baseline pool")
         }))
@@ -70,7 +70,8 @@ where
     pub async fn create_new_baseline_angstrom_pool(
         &mut self,
         mut pool_key: PoolKey,
-        block: u64
+        block: u64,
+        is_bundle_mode: bool
     ) -> Result<(BaselinePoolState, Address, Address), BaselinePoolFactoryError> {
         // Add to registry
         let pub_key = PoolId::from(pool_key.clone());
@@ -88,7 +89,7 @@ where
             .expect("new angstrom pool not in conversion map");
 
         let baseline_state = self
-            .create_baseline_pool_from_registry(*internal, pub_key, block)
+            .create_baseline_pool_from_registry(*internal, pub_key, block, is_bundle_mode)
             .await?;
         Ok((baseline_state, pool_key.currency0, pool_key.currency1))
     }
@@ -98,7 +99,8 @@ where
         &self,
         internal_pool_id: PoolId,
         pool_id: PoolId,
-        block: u64
+        block: u64,
+        is_bundle_mode: bool
     ) -> Result<BaselinePoolState, BaselinePoolFactoryError> {
         // Create data loader
         let data_loader = DataLoader::new_with_registry(
@@ -141,8 +143,16 @@ where
             tick_bitmap
         );
 
+        // Create fee configuration based on bundle mode parameter
+        let fee_config = crate::uni_structure::FeeConfiguration {
+            is_bundle_mode,
+            bundle_fee: book_fee, // Store original fee as bundle fee
+            swap_fee: book_fee,   // Use same fee for swap fee in unlocked mode
+            protocol_fee: 500     // Mock protocol fee (0.05% in basis points of 1e6)
+        };
+
         // Create and return BaselinePoolState
-        Ok(BaselinePoolState::new(baseline_liquidity, block, book_fee))
+        Ok(BaselinePoolState::new(baseline_liquidity, block, fee_config))
     }
 
     /// Loads complete tick data in both directions around the current tick

@@ -36,7 +36,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         angstrom_address,
         controller_address,
         pool_manager_address,
-        deploy_block
+        deploy_block,
+        false // Use unlocked mode for example
     )
     .await?;
 

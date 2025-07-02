@@ -107,7 +107,8 @@ impl PoolServiceRunner {
             self.config.angstrom_address,
             self.config.controller_address,
             self.config.pool_manager_address,
-            self.config.deploy_block
+            self.config.deploy_block,
+            false // Use unlocked mode for example
         )
         .await?;
 
