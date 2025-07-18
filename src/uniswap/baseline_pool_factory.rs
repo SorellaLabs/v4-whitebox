@@ -50,19 +50,31 @@ where
 
     /// Creates a BaselinePoolState with full tick loading from existing pools
     /// in registry
-    pub async fn init_baseline_pools(&self, block: u64) -> Vec<BaselinePoolState> {
-        join_all(self.registry.pools().keys().map(async |pool_id| {
+    pub async fn init_baseline_pools(
+        &self,
+        block: u64,
+        is_bundle_mode: bool
+    ) -> Vec<BaselinePoolState> {
+        let pool_ids: Vec<_> = self.registry.pools().keys().copied().collect();
+        let mut futures = Vec::new();
+
+        for pool_id in pool_ids {
             let internal = self
                 .registry
                 .conversion_map
-                .get(pool_id)
+                .get(&pool_id)
                 .expect("factory conversion map failure");
 
-            self.create_baseline_pool_from_registry(*internal, *pool_id, block, false) // Default to unlocked mode
-                .await
-                .expect("failed to init baseline pool")
-        }))
-        .await
+            let future =
+                self.create_baseline_pool_from_registry(*internal, pool_id, block, is_bundle_mode);
+            futures.push(future);
+        }
+
+        let results = join_all(futures).await;
+        results
+            .into_iter()
+            .map(|result| result.expect("failed to init baseline pool").0)
+            .collect()
     }
 
     /// Creates a new BaselinePoolState with full tick loading for Angstrom
@@ -72,7 +84,7 @@ where
         mut pool_key: PoolKey,
         block: u64,
         is_bundle_mode: bool
-    ) -> Result<(BaselinePoolState, Address, Address), BaselinePoolFactoryError> {
+    ) -> Result<(BaselinePoolState, Address, Address, u8, u8), BaselinePoolFactoryError> {
         // Add to registry
         let pub_key = PoolId::from(pool_key.clone());
         self.registry.pools.insert(pub_key, pool_key.clone());
@@ -88,10 +100,10 @@ where
             .get(&pub_key)
             .expect("new angstrom pool not in conversion map");
 
-        let baseline_state = self
+        let (baseline_state, t0_dec, t1_dec) = self
             .create_baseline_pool_from_registry(*internal, pub_key, block, is_bundle_mode)
             .await?;
-        Ok((baseline_state, pool_key.currency0, pool_key.currency1))
+        Ok((baseline_state, pool_key.currency0, pool_key.currency1, t0_dec, t1_dec))
     }
 
     /// Core method that creates BaselinePoolState with complete tick loading
@@ -101,7 +113,7 @@ where
         pool_id: PoolId,
         block: u64,
         is_bundle_mode: bool
-    ) -> Result<BaselinePoolState, BaselinePoolFactoryError> {
+    ) -> Result<(BaselinePoolState, u8, u8), BaselinePoolFactoryError> {
         // Create data loader
         let data_loader = DataLoader::new_with_registry(
             internal_pool_id,
@@ -152,7 +164,11 @@ where
         };
 
         // Create and return BaselinePoolState
-        Ok(BaselinePoolState::new(baseline_liquidity, block, fee_config))
+        Ok((
+            BaselinePoolState::new(baseline_liquidity, block, fee_config),
+            pool_data.tokenADecimals,
+            pool_data.tokenBDecimals
+        ))
     }
 
     /// Loads complete tick data in both directions around the current tick

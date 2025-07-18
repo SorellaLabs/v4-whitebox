@@ -15,9 +15,11 @@ use crate::uni_structure::BaselinePoolState;
 /// Pool information combining BaselinePoolState with token metadata
 #[derive(Debug, Clone)]
 pub struct PoolInfo {
-    pub baseline_state: BaselinePoolState,
-    pub token0:         Address,
-    pub token1:         Address
+    pub baseline_state:  BaselinePoolState,
+    pub token0:          Address,
+    pub token1:          Address,
+    pub token0_decimals: u8,
+    pub token1_decimals: u8
 }
 
 #[derive(Error, Debug)]
@@ -113,12 +115,13 @@ where
             let pool_id = PoolId::from(pool_key);
 
             // Use the factory to create and initialize the pool
-            let (baseline_state, token0, token1) = self
+            let (baseline_state, token0, token1, token0_decimals, token1_decimals) = self
                 .factory
                 .create_new_baseline_angstrom_pool(pool_key, current_block, self.is_bundle_mode)
                 .await?;
 
-            let pool_info = PoolInfo { baseline_state, token0, token1 };
+            let pool_info =
+                PoolInfo { baseline_state, token0, token1, token0_decimals, token1_decimals };
 
             self.pools.insert(pool_id, pool_info);
         }
@@ -208,12 +211,13 @@ where
         tracing::info!("Creating new pool: {:?}", pool_id);
 
         // Create new pool using the factory
-        let (baseline_state, token0, token1) = self
+        let (baseline_state, token0, token1, token0_decimals, token1_decimals) = self
             .factory
             .create_new_baseline_angstrom_pool(pool_key, block_number, self.is_bundle_mode)
             .await?;
 
-        let pool_info = PoolInfo { baseline_state, token0, token1 };
+        let pool_info =
+            PoolInfo { baseline_state, token0, token1, token0_decimals, token1_decimals };
 
         // Add to our tracking map
         self.pools.insert(pool_id, pool_info);

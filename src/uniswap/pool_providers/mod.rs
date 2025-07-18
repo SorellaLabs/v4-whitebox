@@ -3,7 +3,10 @@ use std::{ops::RangeInclusive, sync::Arc};
 use alloy::{providers::Provider, rpc::types::eth::Filter};
 use alloy_primitives::Log;
 
-// use crate::uniswap::pool_manager::PoolManagerError;
+pub mod completed_block_stream;
+pub mod mock_block_stream;
+pub mod pool_update_provider;
+pub mod provider_adapter;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PoolManagerError {
@@ -12,8 +15,6 @@ pub enum PoolManagerError {
     #[error("Transport error: {0}")]
     Transport(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>)
 }
-pub mod mock_block_stream;
-pub mod provider_adapter;
 
 pub trait PoolManagerProvider: Send + Sync + Clone + Unpin {
     fn subscribe_blocks(self) -> futures::stream::BoxStream<'static, Option<PoolMangerBlocks>>;
