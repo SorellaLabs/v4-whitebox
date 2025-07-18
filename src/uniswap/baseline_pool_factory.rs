@@ -48,6 +48,10 @@ where
         Self { provider, registry, pool_manager }
     }
 
+    pub fn get_uniswap_pool_ids(&self) -> impl Iterator<Item = PoolId> + '_ {
+        self.registry.private_keys()
+    }
+
     /// Creates a BaselinePoolState with full tick loading from existing pools
     /// in registry
     pub async fn init_baseline_pools(

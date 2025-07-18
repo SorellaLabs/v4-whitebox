@@ -6,26 +6,59 @@ use std::{
 };
 
 use alloy::{
+    consensus::Transaction,
     eips::BlockId,
-    primitives::{Address, I256, U160},
+    primitives::{Address, I256, U160, aliases::I24},
     providers::Provider,
     rpc::types::{Block, Filter},
-    sol_types::SolEvent
+    sol_types::{SolCall, SolEvent}
 };
 use futures::{FutureExt, StreamExt, stream::Stream};
 use thiserror::Error;
 
 use crate::{
-    pool_providers::completed_block_stream::CompletedBlockStream,
+    pool_providers::{PoolEventStream, completed_block_stream::CompletedBlockStream},
     uniswap::{
         pool::PoolId,
         pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
+        pool_key::PoolKey,
         pool_registry::UniswapPoolRegistry
     }
 };
 
 /// Number of blocks to keep in history for reorg detection
 const REORG_DETECTION_BLOCKS: u64 = 10;
+
+alloy::sol! {
+    #[derive(Debug, PartialEq, Eq)]
+    contract ControllerV1 {
+        event PoolConfigured(
+            address indexed asset0,
+            address indexed asset1,
+            uint24 indexed bundleFee,
+            uint16 tickSpacing,
+            address hook,
+            uint24 feeInE6
+        );
+
+        event PoolRemoved(
+            address indexed asset0,
+            address indexed asset1,
+            uint24 indexed feeInE6,
+            int24 tickSpacing
+        );
+
+        struct PoolUpdate {
+            address assetA;
+            address assetB;
+            uint24 bundleFee;
+            uint24 unlockedFee;
+            uint24 protocolUnlockedFee;
+        }
+
+        function batchUpdatePools(PoolUpdate[] calldata updates) external;
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum PoolUpdateError {
@@ -57,6 +90,25 @@ pub enum PoolUpdate {
         tx_index:  u64,
         log_index: u64,
         event:     ModifyLiquidityEventData
+    },
+    /// Pool configured/added via controller
+    PoolConfigured {
+        pool_id:      PoolId,
+        block:        u64,
+        bundle_fee:   u32,
+        swap_fee:     u32,
+        protocol_fee: u32,
+        tick_spacing: i32
+    },
+    /// Pool removed via controller
+    PoolRemoved { pool_id: PoolId, block: u64 },
+    /// Fee update event. the pool_id here is the uniswap pool_id
+    FeeUpdate {
+        pool_id:      PoolId,
+        block:        u64,
+        bundle_fee:   u32,
+        swap_fee:     u32,
+        protocol_fee: u32
     },
     /// Reorg detected
     Reorg { from_block: u64, to_block: u64 },
@@ -109,12 +161,14 @@ pub struct PoolUpdateProvider<P>
 where
     P: Provider + 'static
 {
-    provider:      Arc<P>,
-    pool_manager:  Address,
-    pool_registry: UniswapPoolRegistry,
-    tracked_pools: HashSet<PoolId>,
-    event_history: VecDeque<StoredEvent>,
-    current_block: u64
+    provider:           Arc<P>,
+    pool_manager:       Address,
+    controller_address: Address,
+    angstrom_address:   Address,
+    pool_registry:      UniswapPoolRegistry,
+    tracked_pools:      HashSet<PoolId>,
+    event_history:      VecDeque<StoredEvent>,
+    current_block:      u64
 }
 
 impl<P> PoolUpdateProvider<P>
@@ -125,6 +179,8 @@ where
     pub async fn new(
         provider: Arc<P>,
         pool_manager: Address,
+        controller_address: Address,
+        angstrom_address: Address,
         pool_registry: UniswapPoolRegistry
     ) -> Self {
         let current_block = provider
@@ -137,6 +193,8 @@ where
         Self {
             provider,
             pool_manager,
+            controller_address,
+            angstrom_address,
             pool_registry,
             tracked_pools: HashSet::new(),
             event_history: VecDeque::with_capacity(REORG_DETECTION_BLOCKS as usize),
@@ -263,6 +321,115 @@ where
                         log_index: log.log_index.unwrap_or(0),
                         event:     event_data
                     });
+                }
+            }
+        }
+
+        // Query controller events
+        let controller_filter = Filter::new()
+            .address(self.controller_address)
+            .from_block(block_number)
+            .to_block(block_number);
+
+        let controller_logs = self
+            .provider
+            .get_logs(&controller_filter)
+            .await
+            .map_err(|e| {
+                PoolUpdateError::Provider(format!("Failed to get controller logs: {e}"))
+            })?;
+
+        // Process controller logs
+        for log in controller_logs {
+            if let Ok(event) = ControllerV1::PoolConfigured::decode_log(&log.inner) {
+                let pool_key = PoolKey {
+                    currency0:   event.asset0,
+                    currency1:   event.asset1,
+                    fee:         event.bundleFee,
+                    tickSpacing: I24::try_from_be_slice(&{
+                        let bytes = event.tickSpacing.to_be_bytes();
+                        let mut a = [0u8; 3];
+                        a[1..3].copy_from_slice(&bytes);
+                        a
+                    })
+                    .unwrap(),
+                    hooks:       self.angstrom_address
+                };
+
+                let pool_id = PoolId::from(pool_key);
+
+                updates.push(PoolUpdate::PoolConfigured {
+                    pool_id,
+                    block: block_number,
+                    bundle_fee: event.bundleFee.to(),
+                    swap_fee: event.feeInE6.to(),
+                    protocol_fee: 500, // TODO: Determine how to get protocol fee
+                    tick_spacing: event.tickSpacing as i32
+                });
+            }
+
+            if let Ok(event) = ControllerV1::PoolRemoved::decode_log(&log.inner) {
+                let pool_key = PoolKey {
+                    currency0:   event.asset0,
+                    currency1:   event.asset1,
+                    fee:         event.feeInE6,
+                    tickSpacing: event.tickSpacing,
+                    hooks:       self.angstrom_address
+                };
+
+                let pool_id = PoolId::from(pool_key);
+
+                updates.push(PoolUpdate::PoolRemoved { pool_id, block: block_number });
+            }
+        }
+
+        // Process transactions to find batchUpdatePools calls
+        let block = self
+            .provider
+            .get_block(BlockId::Number(block_number.into()))
+            .await
+            .map_err(|e| PoolUpdateError::Provider(format!("Failed to get block: {e}")))?
+            .ok_or_else(|| PoolUpdateError::Provider("Block not found".to_string()))?;
+
+        if let Some(transactions) = block.transactions.as_transactions() {
+            for tx in transactions {
+                // Check if transaction is to the controller
+                if tx.to() == Some(self.controller_address) {
+                    // Try to decode as batchUpdatePools call
+                    if let Ok(call) = ControllerV1::batchUpdatePoolsCall::abi_decode(tx.input()) {
+                        for update in call.updates {
+                            // Normalize asset order
+                            let (asset0, asset1) = if update.assetB > update.assetA {
+                                (update.assetA, update.assetB)
+                            } else {
+                                (update.assetB, update.assetA)
+                            };
+
+                            // TODO: This is incorrect - we need to look up the actual pool ID
+                            // from the asset pair. The batchUpdatePools doesn't give us the
+                            // tick spacing or original fee needed to construct the correct pool
+                            // key. We should maintain a mapping of
+                            // (asset0, asset1) -> PoolId
+                            let pool_key = PoolKey {
+                                currency0:   asset0,
+                                currency1:   asset1,
+                                fee:         update.bundleFee, /* WRONG: Using bundle fee as
+                                                                * pool identifier */
+                                tickSpacing: I24::ZERO, // WRONG: We don't have tick spacing
+                                hooks:       self.angstrom_address
+                            };
+
+                            let pool_id = PoolId::from(pool_key);
+
+                            updates.push(PoolUpdate::FeeUpdate {
+                                pool_id,
+                                block: block_number,
+                                bundle_fee: update.bundleFee.to(),
+                                swap_fee: update.unlockedFee.to(),
+                                protocol_fee: update.protocolUnlockedFee.to()
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -421,6 +588,118 @@ where
                 }
             }
 
+            // Query controller events for this chunk
+            let controller_filter = Filter::new()
+                .address(self.controller_address)
+                .from_block(current)
+                .to_block(end);
+
+            let controller_logs =
+                self.provider
+                    .get_logs(&controller_filter)
+                    .await
+                    .map_err(|e| {
+                        PoolUpdateError::Provider(format!(
+                            "Failed to get controller logs during backfill: {e}"
+                        ))
+                    })?;
+
+            // Process controller logs
+            for log in controller_logs {
+                let block_number = log.block_number.unwrap();
+
+                if let Ok(event) = ControllerV1::PoolConfigured::decode_log(&log.inner) {
+                    let pool_key = PoolKey {
+                        currency0:   event.asset0,
+                        currency1:   event.asset1,
+                        fee:         event.bundleFee,
+                        tickSpacing: I24::unchecked_from(event.tickSpacing),
+                        hooks:       self.angstrom_address
+                    };
+
+                    let pool_id = PoolId::from(pool_key);
+
+                    all_updates.push(PoolUpdate::PoolConfigured {
+                        pool_id,
+                        block: block_number,
+                        bundle_fee: event.bundleFee.to(),
+                        swap_fee: event.feeInE6.to(),
+                        protocol_fee: 500, // TODO: Determine how to get protocol fee
+                        tick_spacing: event.tickSpacing as i32
+                    });
+                }
+
+                if let Ok(event) = ControllerV1::PoolRemoved::decode_log(&log.inner) {
+                    let pool_key = PoolKey {
+                        currency0:   event.asset0,
+                        currency1:   event.asset1,
+                        fee:         event.feeInE6,
+                        tickSpacing: event.tickSpacing,
+                        hooks:       self.angstrom_address
+                    };
+
+                    let pool_id = PoolId::from(pool_key);
+
+                    all_updates.push(PoolUpdate::PoolRemoved { pool_id, block: block_number });
+                }
+            }
+
+            // Process transactions in this block range to find batchUpdatePools calls
+            for block_num in current..=end {
+                let block = self
+                    .provider
+                    .get_block(BlockId::Number(block_num.into()))
+                    .await
+                    .map_err(|e| {
+                        PoolUpdateError::Provider(format!(
+                            "Failed to get block during backfill: {e}"
+                        ))
+                    })?;
+
+                if let Some(block) = block {
+                    if let Some(transactions) = block.transactions.as_transactions() {
+                        for tx in transactions {
+                            // Check if transaction is to the controller
+                            if tx.to() == Some(self.controller_address) {
+                                // Try to decode as batchUpdatePools call
+                                if let Ok(call) =
+                                    ControllerV1::batchUpdatePoolsCall::abi_decode(tx.input())
+                                {
+                                    for update in call.updates {
+                                        // Normalize asset order
+                                        let (asset0, asset1) = if update.assetB > update.assetA {
+                                            (update.assetA, update.assetB)
+                                        } else {
+                                            (update.assetB, update.assetA)
+                                        };
+
+                                        // TODO: This is incorrect - same issue as above
+                                        // Need to look up actual pool ID from asset pair
+                                        let pool_key = PoolKey {
+                                            currency0:   asset0,
+                                            currency1:   asset1,
+                                            fee:         update.bundleFee,
+                                            tickSpacing: I24::ZERO,
+                                            hooks:       self.angstrom_address
+                                        };
+
+                                        let pool_id = PoolId::from(pool_key);
+
+                                        all_updates.push(PoolUpdate::FeeUpdate {
+                                            pool_id,
+                                            block: block_num,
+                                            bundle_fee: update.bundleFee.to(),
+                                            swap_fee: update.unlockedFee.to(),
+                                            protocol_fee: update.protocolUnlockedFee.to()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             current = end + 1;
         }
 
@@ -466,7 +745,10 @@ where
             match update {
                 PoolUpdate::SwapEvent { pool_id, .. }
                 | PoolUpdate::LiquidityEvent { pool_id, .. }
-                | PoolUpdate::UpdatedSlot0 { pool_id, .. } => {
+                | PoolUpdate::UpdatedSlot0 { pool_id, .. }
+                | PoolUpdate::PoolConfigured { pool_id, .. }
+                | PoolUpdate::PoolRemoved { pool_id, .. }
+                | PoolUpdate::FeeUpdate { pool_id, .. } => {
                     affected_pools.insert(*pool_id);
                 }
                 _ => {}
@@ -582,10 +864,12 @@ where
 }
 
 pub struct StateStream<P: Provider + 'static> {
-    update_provider: Option<PoolUpdateProvider<P>>,
-    block_stream:    CompletedBlockStream<P>,
+    update_provider:      Option<PoolUpdateProvider<P>>,
+    block_stream:         CompletedBlockStream<P>,
     processing:
-        Option<Pin<Box<dyn Future<Output = (PoolUpdateProvider<P>, Vec<PoolUpdate>)> + Send>>>
+        Option<Pin<Box<dyn Future<Output = (PoolUpdateProvider<P>, Vec<PoolUpdate>)> + Send>>>,
+    start_tracking_pools: Vec<PoolId>,
+    stop_tracking_pools:  Vec<PoolId>
 }
 
 impl<P: Provider + 'static> StateStream<P> {
@@ -593,7 +877,31 @@ impl<P: Provider + 'static> StateStream<P> {
         update_provider: PoolUpdateProvider<P>,
         block_stream: CompletedBlockStream<P>
     ) -> Self {
-        Self { update_provider: Some(update_provider), block_stream, processing: None }
+        Self {
+            update_provider: Some(update_provider),
+            block_stream,
+            processing: None,
+            start_tracking_pools: vec![],
+            stop_tracking_pools: vec![]
+        }
+    }
+}
+
+impl<P: Provider + 'static> PoolEventStream for StateStream<P> {
+    fn stop_tracking_pool(&mut self, pool_id: PoolId) {
+        if let Some(update_provider) = self.update_provider.as_mut() {
+            update_provider.remove_pool(pool_id);
+        } else {
+            self.stop_tracking_pools.push(pool_id);
+        }
+    }
+
+    fn start_tracking_pool(&mut self, pool_id: PoolId) {
+        if let Some(update_provider) = self.update_provider.as_mut() {
+            update_provider.add_pool(pool_id);
+        } else {
+            self.start_tracking_pools.push(pool_id);
+        }
     }
 }
 
@@ -614,6 +922,14 @@ impl<P: Provider + 'static> Stream for StateStream<P> {
             this.processing = Some(processing);
 
             return Poll::Pending
+        }
+
+        let updater = this.update_provider.as_mut().unwrap();
+        for pool in this.start_tracking_pools.drain(..) {
+            updater.add_pool(pool);
+        }
+        for pool in this.stop_tracking_pools.drain(..) {
+            updater.remove_pool(pool);
         }
 
         if let Poll::Ready(Some(new_block)) = this.block_stream.poll_next_unpin(cx) {
