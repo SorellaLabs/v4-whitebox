@@ -9,10 +9,11 @@ use std::{
 
 use alloy::{
     consensus::BlockHeader,
+    eips::BlockId,
     primitives::{Address, I256, Log, U160, U256},
     providers::{Provider, ProviderBuilder, WatchTxError},
     pubsub::PubSubFrontend,
-    rpc::types::Filter,
+    rpc::types::{Block, Filter},
     sol_types::SolEvent
 };
 use futures::{
@@ -22,10 +23,13 @@ use futures::{
 };
 use thiserror::Error;
 
-use crate::uniswap::{
-    pool::PoolId,
-    pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
-    pool_registry::UniswapPoolRegistry
+use crate::{
+    pool_providers::completed_block_stream::CompletedBlockStream,
+    uniswap::{
+        pool::PoolId,
+        pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
+        pool_registry::UniswapPoolRegistry
+    }
 };
 
 #[derive(Debug, Error)]
@@ -112,10 +116,9 @@ enum EventType {
 }
 
 /// Pool update provider that streams pool state changes
-#[derive(Clone)]
 pub struct PoolUpdateProvider<P>
 where
-    P: Provider + Clone + 'static
+    P: Provider + 'static
 {
     provider:             Arc<P>,
     pool_manager:         Address,
@@ -124,22 +127,40 @@ where
     event_history:        VecDeque<StoredEvent>,
     event_history_size:   usize,
     current_block:        u64,
-    last_processed_block: Option<u64>,
-    max_retry_attempts:   u32,
-    retry_delay:          Duration
+    last_processed_block: Option<u64>
 }
 
 impl<P> PoolUpdateProvider<P>
 where
-    P: Provider + Clone + 'static
+    P: Provider + 'static
 {
     /// Create a new pool update provider
-    pub fn new(
+    pub async fn new(
         provider: Arc<P>,
         pool_manager: Address,
         pool_registry: UniswapPoolRegistry,
         event_history_size: usize
     ) -> Self {
+        let current_block = provider
+            .get_block(BlockId::Number(alloy::eips::BlockNumberOrTag::Latest))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let block_stream = CompletedBlockStream::new(
+            current_block.header.parent_hash,
+            current_block.number(),
+            provider.clone(),
+            provider
+                .subscribe_full_blocks()
+                .channel_size(5)
+                .into_stream()
+                .await
+                .unwrap()
+                .map(|block| block.unwrap())
+                .boxed()
+        );
+
         Self {
             provider,
             pool_manager,
@@ -148,9 +169,7 @@ where
             event_history: VecDeque::with_capacity(event_history_size),
             event_history_size,
             current_block: 0,
-            last_processed_block: None,
-            max_retry_attempts: 5,
-            retry_delay: Duration::from_secs(1)
+            last_processed_block: None
         }
     }
 
@@ -167,11 +186,6 @@ where
     /// Get all tracked pool IDs
     pub fn tracked_pools(&self) -> Vec<PoolId> {
         self.tracked_pools.iter().copied().collect()
-    }
-
-    /// Subscribe to pool updates stream
-    pub fn subscribe_updates(self) -> PoolUpdateStream<P> {
-        PoolUpdateStream::new(self)
     }
 
     /// Process events for a specific block
@@ -453,7 +467,7 @@ where
             for log in swap_logs {
                 let block_number = log.block_number.unwrap_or(0);
 
-                if let Ok(swap_event) = IUniswapV4Pool::Swap::decode_log(&log) {
+                if let Ok(swap_event) = IUniswapV4Pool::Swap::decode_log(&log.inner) {
                     // Double-check pool ID
                     if self.tracked_pools.contains(&swap_event.id) {
                         let event_data = SwapEventData {
@@ -481,7 +495,7 @@ where
             for log in modify_logs {
                 let block_number = log.block_number.unwrap_or(0);
 
-                if let Ok(modify_event) = IUniswapV4Pool::ModifyLiquidity::decode_log(&log) {
+                if let Ok(modify_event) = IUniswapV4Pool::ModifyLiquidity::decode_log(&log.inner) {
                     // Double-check pool ID
                     if self.tracked_pools.contains(&modify_event.id) {
                         let event_data = ModifyLiquidityEventData {
@@ -508,303 +522,51 @@ where
 
         Ok(all_updates)
     }
-}
 
-/// Stream state for the pool update stream
-enum StreamState<P: Provider> {
-    /// Waiting to subscribe to blocks
-    Initializing { retry_count: u32 },
-    /// Reconnecting after failure
-    Reconnecting { retry_count: u32, backoff_future: BoxFuture<'static, ()> },
-    /// Backfilling missed blocks
-    Backfilling {
-        future:     BoxFuture<'static, Result<Vec<PoolUpdate>, PoolUpdateError>>,
-        next_state: Box<StreamState<P>>
-    },
-    /// Subscribed and waiting for blocks
-    Subscribed {
-        block_stream:    BoxStream<'static, alloy::rpc::types::Block>,
-        pending_updates: VecDeque<Result<PoolUpdate, PoolUpdateError>>
-    },
-    /// Processing a block or reorg
-    Processing {
-        block_stream:    BoxStream<'static, alloy::rpc::types::Block>,
-        future: BoxFuture<'static, (Vec<Result<PoolUpdate, PoolUpdateError>>, Option<u64>)>,
-        pending_updates: VecDeque<Result<PoolUpdate, PoolUpdateError>>
-    },
-    /// Stream has ended
-    Done
-}
-
-/// Custom stream implementation for pool updates
-pub struct PoolUpdateStream<P>
-where
-    P: Provider + Clone + 'static
-{
-    provider: PoolUpdateProvider<P>,
-    state:    StreamState<P>
-}
-
-impl<P> PoolUpdateStream<P>
-where
-    P: Provider + Clone + 'static
-{
-    fn new(provider: PoolUpdateProvider<P>) -> Self {
-        Self { provider, state: StreamState::Initializing { retry_count: 0 } }
+    async fn on_new_block(&mut self, block: Block) -> Vec<PoolUpdate> {
+        vec![]
     }
 }
 
-impl<P> Stream for PoolUpdateStream<P>
-where
-    P: Provider + Clone + 'static
-{
-    type Item = Result<PoolUpdate, PoolUpdateError>;
+pub struct StateStream<P: Provider + 'static> {
+    update_provider: Option<PoolUpdateProvider<P>>,
+    block_stream:    CompletedBlockStream<P>,
+    processing:
+        Option<Pin<Box<dyn Future<Output = (PoolUpdateProvider<P>, Vec<PoolUpdate>)> + Send>>>
+}
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            match &mut self.state {
-                StreamState::Initializing { retry_count } => {
-                    let retry_count = *retry_count;
+impl<P: Provider + 'static> Stream for StateStream<P> {
+    type Item = Vec<PoolUpdate>;
 
-                    // Check if we've exceeded max retries
-                    if retry_count >= self.provider.max_retry_attempts {
-                        self.state = StreamState::Done;
-                        return Poll::Ready(Some(Err(PoolUpdateError::Provider(format!(
-                            "Failed to connect after {} attempts",
-                            retry_count
-                        )))));
-                    }
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
 
-                    // Start the subscription
-                    let provider = self.provider.provider.clone();
-                    let mut future = Box::pin(async move { provider.subscribe_blocks().await });
+        // If we are processing something, we don't want to poll the block stream as
+        // this could cause panics as the update provider has moved.
+        if let Some(mut processing) = this.processing.take() {
+            if let Poll::Ready((provider, new_updates)) = processing.poll_unpin(cx) {
+                this.update_provider = Some(provider);
 
-                    match future.poll_unpin(cx) {
-                        Poll::Ready(Ok(subscription)) => {
-                            // Check if we need to backfill
-                            if let Some(last_block) = self.provider.last_processed_block {
-                                // Get current block to see if we missed any
-                                let provider_clone = self.provider.provider.clone();
-                                let mut current_block_future =
-                                    Box::pin(
-                                        async move { provider_clone.get_block_number().await }
-                                    );
-
-                                match current_block_future.poll_unpin(cx) {
-                                    Poll::Ready(Ok(current_block)) => {
-                                        if current_block > last_block + 1 {
-                                            // Need to backfill
-                                            let mut provider_clone = self.provider.clone();
-                                            let from = last_block + 1;
-                                            let to = current_block - 1;
-
-                                            let backfill_future = Box::pin(async move {
-                                                provider_clone.backfill_blocks(from, to).await
-                                            });
-
-                                            self.state = StreamState::Backfilling {
-                                                future:     backfill_future,
-                                                next_state: Box::new(StreamState::Subscribed {
-                                                    block_stream:    subscription
-                                                        .into_stream()
-                                                        .boxed(),
-                                                    pending_updates: VecDeque::new()
-                                                })
-                                            };
-                                        } else {
-                                            self.state = StreamState::Subscribed {
-                                                block_stream:    subscription.into_stream().boxed(),
-                                                pending_updates: VecDeque::new()
-                                            };
-                                        }
-                                    }
-                                    Poll::Ready(Err(e)) => {
-                                        // Failed to get current block, proceed without backfill
-                                        self.state = StreamState::Subscribed {
-                                            block_stream:    subscription.into_stream().boxed(),
-                                            pending_updates: VecDeque::new()
-                                        };
-                                    }
-                                    Poll::Pending => return Poll::Pending
-                                }
-                            } else {
-                                self.state = StreamState::Subscribed {
-                                    block_stream:    subscription.into_stream().boxed(),
-                                    pending_updates: VecDeque::new()
-                                };
-                            }
-                        }
-                        Poll::Ready(Err(e)) => {
-                            // Failed to subscribe, enter reconnection state
-                            let delay = self.provider.retry_delay * (2u32.pow(retry_count.min(5)));
-                            let backoff_future = Box::pin(tokio::time::sleep(delay));
-
-                            self.state = StreamState::Reconnecting {
-                                retry_count: retry_count + 1,
-                                backoff_future
-                            };
-                        }
-                        Poll::Pending => return Poll::Pending
-                    }
-                }
-
-                StreamState::Reconnecting { retry_count, backoff_future } => {
-                    match backoff_future.poll_unpin(cx) {
-                        Poll::Ready(()) => {
-                            let retry_count = *retry_count;
-                            self.state = StreamState::Initializing { retry_count };
-                        }
-                        Poll::Pending => return Poll::Pending
-                    }
-                }
-
-                StreamState::Backfilling { future, next_state } => {
-                    match future.poll_unpin(cx) {
-                        Poll::Ready(Ok(updates)) => {
-                            let mut pending_updates = VecDeque::new();
-                            pending_updates.extend(updates.into_iter().map(Ok));
-
-                            // Move to next state with pending updates
-                            match std::mem::replace(next_state, Box::new(StreamState::Done))
-                                .as_mut()
-                            {
-                                StreamState::Subscribed {
-                                    block_stream: _,
-                                    pending_updates: next_pending
-                                } => {
-                                    next_pending.extend(pending_updates);
-                                }
-                                _ => {}
-                            }
-
-                            self.state =
-                                *std::mem::replace(next_state, Box::new(StreamState::Done));
-                        }
-                        Poll::Ready(Err(e)) => {
-                            // Backfill failed, but continue with subscription
-                            let mut pending_updates = VecDeque::new();
-                            pending_updates.push_back(Err(e));
-
-                            // Move to next state with error
-                            match std::mem::replace(next_state, Box::new(StreamState::Done))
-                                .as_mut()
-                            {
-                                StreamState::Subscribed {
-                                    block_stream: _,
-                                    pending_updates: next_pending
-                                } => {
-                                    next_pending.extend(pending_updates);
-                                }
-                                _ => {}
-                            }
-
-                            self.state =
-                                *std::mem::replace(next_state, Box::new(StreamState::Done));
-                        }
-                        Poll::Pending => return Poll::Pending
-                    }
-                }
-
-                StreamState::Subscribed { block_stream, pending_updates } => {
-                    // Check if we have pending updates to yield
-                    if let Some(update) = pending_updates.pop_front() {
-                        return Poll::Ready(Some(update));
-                    }
-
-                    // Poll for new blocks
-                    match block_stream.poll_next_unpin(cx) {
-                        Poll::Ready(Some(block)) => {
-                            let block_number = block.header.number;
-                            let mut provider = self.provider.clone();
-                            let current_block = provider.current_block;
-
-                            // Create future to process the block
-                            let future = Box::pin(async move {
-                                let mut results = Vec::new();
-                                let mut new_block_number = None;
-
-                                // Check for reorg
-                                if block_number < current_block {
-                                    results.push(Ok(PoolUpdate::Reorg {
-                                        from_block: block_number,
-                                        to_block:   current_block
-                                    }));
-
-                                    // Handle reorg
-                                    let reorg_range = block_number..=current_block;
-                                    match provider.handle_reorg(reorg_range).await {
-                                        Ok(updates) => {
-                                            results.extend(updates.into_iter().map(Ok));
-                                        }
-                                        Err(e) => {
-                                            results.push(Err(PoolUpdateError::ReorgHandling(
-                                                format!("Failed to handle reorg: {}", e)
-                                            )));
-                                        }
-                                    }
-                                }
-
-                                // Process block events
-                                match provider.process_block_events(block_number).await {
-                                    Ok(updates) => {
-                                        results.extend(updates.into_iter().map(Ok));
-                                    }
-                                    Err(e) => {
-                                        results.push(Err(e));
-                                    }
-                                }
-
-                                provider.current_block = block_number;
-                                provider.last_processed_block = Some(block_number);
-                                new_block_number = Some(block_number);
-                                results.push(Ok(PoolUpdate::NewBlock(block_number)));
-
-                                (results, new_block_number)
-                            });
-
-                            let stream =
-                                std::mem::replace(block_stream, futures::stream::empty().boxed());
-                            self.state = StreamState::Processing {
-                                block_stream: stream,
-                                future,
-                                pending_updates: std::mem::take(pending_updates)
-                            };
-                        }
-                        Poll::Ready(None) => {
-                            // Stream ended, attempt to reconnect
-                            self.state = StreamState::Initializing { retry_count: 0 };
-                        }
-                        Poll::Pending => return Poll::Pending
-                    }
-                }
-
-                StreamState::Processing { block_stream, future, pending_updates } => {
-                    match future.poll_unpin(cx) {
-                        Poll::Ready((results, new_block_number)) => {
-                            // Update provider's current block if needed
-                            if let Some(block_num) = new_block_number {
-                                self.provider.current_block = block_num;
-                                self.provider.last_processed_block = Some(block_num);
-                            }
-
-                            // Add results to pending updates
-                            pending_updates.extend(results);
-
-                            // Transition back to subscribed state
-                            let stream =
-                                std::mem::replace(block_stream, futures::stream::empty().boxed());
-                            let updates = std::mem::take(pending_updates);
-                            self.state = StreamState::Subscribed {
-                                block_stream:    stream,
-                                pending_updates: updates
-                            };
-                        }
-                        Poll::Pending => return Poll::Pending
-                    }
-                }
-
-                StreamState::Done => return Poll::Ready(None)
+                return Poll::Ready(Some(new_updates));
             }
+            this.processing = Some(processing);
+
+            return Poll::Pending
         }
+
+        if let Poll::Ready(Some(new_block)) = this.block_stream.poll_next_unpin(cx) {
+            cx.waker().wake_by_ref();
+            let mut update_provider = this.update_provider.take().unwrap();
+
+            let processing_future = async move {
+                let updates = update_provider.on_new_block(new_block).await;
+                (update_provider, updates)
+            }
+            .boxed();
+
+            this.processing = Some(processing_future)
+        }
+
+        Poll::Pending
     }
 }
