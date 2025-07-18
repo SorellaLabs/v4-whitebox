@@ -38,13 +38,13 @@ pub fn set_controller_address(address: Address) {
     CONTROLLER_V1_ADDRESS.set(address).unwrap_or_else(|_| {
         // In test environments, controller address might already be set
         // This is acceptable as long as it's the same address
-        if let Some(existing) = CONTROLLER_V1_ADDRESS.get() {
-            if *existing != address {
-                panic!(
-                    "Controller address already set to different value: existing={:?}, new={:?}",
-                    existing, address
-                );
-            }
+        if let Some(existing) = CONTROLLER_V1_ADDRESS.get()
+            && *existing != address
+        {
+            panic!(
+                "Controller address already set to different value: existing={existing:?}, \
+                 new={address:?}"
+            );
         }
     });
 }

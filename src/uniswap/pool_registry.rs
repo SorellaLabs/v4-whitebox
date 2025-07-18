@@ -33,17 +33,17 @@ impl From<Vec<PoolKey>> for UniswapPoolRegistry {
         let pubmap = pools
             .iter()
             .map(|pool_key| {
-                let pool_id = PoolId::from(pool_key.clone());
-                (pool_id, pool_key.clone())
+                let pool_id = PoolId::from(*pool_key);
+                (pool_id, *pool_key)
             })
             .collect();
 
         let priv_map = pools
             .into_iter()
             .map(|mut pool_key| {
-                let pool_id_pub = PoolId::from(pool_key.clone());
+                let pool_id_pub = PoolId::from(pool_key);
                 pool_key.fee = U24::from(0x800000);
-                let pool_id_priv = PoolId::from(pool_key.clone());
+                let pool_id_priv = PoolId::from(pool_key);
                 (pool_id_pub, pool_id_priv)
             })
             .collect();

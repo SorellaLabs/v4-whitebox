@@ -86,12 +86,12 @@ where
         is_bundle_mode: bool
     ) -> Result<(BaselinePoolState, Address, Address, u8, u8), BaselinePoolFactoryError> {
         // Add to registry
-        let pub_key = PoolId::from(pool_key.clone());
-        self.registry.pools.insert(pub_key, pool_key.clone());
+        let pub_key = PoolId::from(pool_key);
+        self.registry.pools.insert(pub_key, pool_key);
 
         // Create private key
         pool_key.fee = U24::from(0x800000);
-        let priv_key = PoolId::from(pool_key.clone());
+        let priv_key = PoolId::from(pool_key);
         self.registry.conversion_map.insert(pub_key, priv_key);
 
         let internal = self
@@ -127,10 +127,7 @@ where
             .load_pool_data(Some(block), self.provider.clone())
             .await
             .map_err(|e| {
-                BaselinePoolFactoryError::PoolDataLoading(format!(
-                    "Failed to load pool data: {}",
-                    e
-                ))
+                BaselinePoolFactoryError::PoolDataLoading(format!("Failed to load pool data: {e}"))
             })?;
 
         // Extract basic pool state
@@ -275,10 +272,7 @@ where
             )
             .await
             .map_err(|e| {
-                BaselinePoolFactoryError::PoolDataLoading(format!(
-                    "Failed to load tick data: {}",
-                    e
-                ))
+                BaselinePoolFactoryError::PoolDataLoading(format!("Failed to load tick data: {e}"))
             })?;
 
         // Calculate next tick start position

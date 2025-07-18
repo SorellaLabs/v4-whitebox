@@ -94,7 +94,7 @@ where
     pub async fn initialize(&mut self) -> Result<(), PoolManagerServiceError> {
         // Get the current block number
         let current_block = self.provider.get_block_number().await.map_err(|e| {
-            PoolManagerServiceError::Provider(format!("Failed to get block number: {}", e))
+            PoolManagerServiceError::Provider(format!("Failed to get block number: {e}"))
         })?;
 
         self.current_block = current_block;
@@ -189,10 +189,10 @@ where
                 let pool_id = PoolId::from(pool_key);
 
                 // Check if this is a new pool
-                if !self.pools.contains_key(&pool_id) {
-                    if let Err(e) = self.handle_new_pool(pool_key, block_number).await {
-                        tracing::error!("Failed to create new pool {:?}: {}", pool_id, e);
-                    }
+                if !self.pools.contains_key(&pool_id)
+                    && let Err(e) = self.handle_new_pool(pool_key, block_number).await
+                {
+                    tracing::error!("Failed to create new pool {:?}: {}", pool_id, e);
                 }
             }
         }
@@ -230,7 +230,7 @@ where
     /// blocks
     pub async fn update_to_latest_block(&mut self) -> Result<u64, PoolManagerServiceError> {
         let latest_block = self.provider.get_block_number().await.map_err(|e| {
-            PoolManagerServiceError::Provider(format!("Failed to get latest block: {}", e))
+            PoolManagerServiceError::Provider(format!("Failed to get latest block: {e}"))
         })?;
 
         if latest_block > self.current_block {
