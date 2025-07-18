@@ -39,23 +39,26 @@ pub enum PoolManagerServiceError {
 
 /// Service for managing Uniswap V4 pools with real-time block subscription
 /// updates
-pub struct PoolManagerService<P, Event>
+pub struct PoolManagerService<P, Event, S = ()>
 where
     P: Provider + Clone + 'static,
     Event: PoolEventStream
 {
-    factory:            BaselinePoolFactory<P>,
-    event_stream:       Event,
-    provider:           Arc<P>,
-    angstrom_address:   Address,
-    controller_address: Address,
-    deploy_block:       u64,
-    pools:              HashMap<PoolId, PoolInfo>,
-    current_block:      u64,
-    is_bundle_mode:     bool
+    pub(crate) factory:                 BaselinePoolFactory<P>,
+    pub(crate) event_stream:            Event,
+    pub(crate) provider:                Arc<P>,
+    pub(crate) angstrom_address:        Address,
+    pub(crate) controller_address:      Address,
+    pub(crate) deploy_block:            u64,
+    pub(crate) pools:                   HashMap<PoolId, PoolInfo>,
+    pub(crate) current_block:           u64,
+    pub(crate) is_bundle_mode:          bool,
+    pub(crate) auto_pool_creation:      bool,
+    pub(crate) slot0_stream:            Option<S>,
+    pub(crate) initial_tick_range_size: u16
 }
 
-impl<P, Event> PoolManagerService<P, Event>
+impl<P, Event, S> PoolManagerService<P, Event, S>
 where
     P: Provider + Clone + 'static,
     DataLoader: super::pool_data_loader::PoolDataLoader,
@@ -88,7 +91,10 @@ where
             deploy_block,
             pools: HashMap::new(),
             current_block: deploy_block,
-            is_bundle_mode
+            is_bundle_mode,
+            auto_pool_creation: true,
+            slot0_stream: None,
+            initial_tick_range_size: 400
         };
 
         // Initialize the service immediately
@@ -96,15 +102,49 @@ where
 
         // Ensure to register the pool_ids with the state stream.
         for pool_id in service.factory.get_uniswap_pool_ids() {
-            service.event_stream.stop_tracking_pool(pool_id);
+            service.event_stream.start_tracking_pool(pool_id);
         }
 
         Ok(service)
     }
 
+    /// Initialize the service with a fixed set of pools
+    pub(crate) async fn initialize_with_fixed_pools(
+        &mut self,
+        pool_keys: Vec<PoolKey>
+    ) -> Result<(), PoolManagerServiceError> {
+        // Get the current block number
+        let current_block = self.provider.get_block_number().await.map_err(|e| {
+            PoolManagerServiceError::Provider(format!("Failed to get block number: {e}"))
+        })?;
+
+        self.current_block = current_block;
+
+        tracing::info!("Initializing with {} fixed pools", pool_keys.len());
+
+        // Create pools one by one using the factory's create_new_angstrom_pool method
+        for pool_key in pool_keys {
+            let pool_id = PoolId::from(pool_key);
+
+            // Use the factory to create and initialize the pool
+            let (baseline_state, token0, token1, token0_decimals, token1_decimals) = self
+                .factory
+                .create_new_baseline_angstrom_pool(pool_key, current_block, self.is_bundle_mode)
+                .await?;
+
+            let pool_info =
+                PoolInfo { baseline_state, token0, token1, token0_decimals, token1_decimals };
+
+            self.pools.insert(pool_id, pool_info);
+        }
+
+        tracing::info!("Successfully initialized {} pools", self.pools.len());
+        Ok(())
+    }
+
     /// Initialize the service by fetching all existing pools and creating pool
     /// instances
-    async fn initialize(&mut self) -> Result<(), PoolManagerServiceError> {
+    pub(crate) async fn initialize(&mut self) -> Result<(), PoolManagerServiceError> {
         // Get the current block number
         let current_block = self.provider.get_block_number().await.map_err(|e| {
             PoolManagerServiceError::Provider(format!("Failed to get block number: {e}"))
@@ -201,11 +241,16 @@ where
             for pool_key in updated_pool_keys {
                 let pool_id = PoolId::from(pool_key);
 
-                // Check if this is a new pool
-                if !self.pools.contains_key(&pool_id)
-                    && let Err(e) = self.handle_new_pool(pool_key, block_number).await
-                {
-                    tracing::error!("Failed to create new pool {:?}: {}", pool_id, e);
+                // Check if this is a new pool and auto_pool_creation is enabled
+                if !self.pools.contains_key(&pool_id) && self.auto_pool_creation {
+                    if let Err(e) = self.handle_new_pool(pool_key, block_number).await {
+                        tracing::error!("Failed to create new pool {:?}: {}", pool_id, e);
+                    }
+                } else if !self.auto_pool_creation && !self.pools.contains_key(&pool_id) {
+                    tracing::debug!(
+                        "Skipping new pool {:?} - auto pool creation disabled",
+                        pool_id
+                    );
                 }
             }
         }
