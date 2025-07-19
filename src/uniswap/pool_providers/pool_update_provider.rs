@@ -365,7 +365,7 @@ where
     /// Process batch update pools from transaction
     fn process_batch_update_pools(
         &self,
-        tx: &alloy::consensus::TxEnvelope,
+        tx: &alloy::rpc::types::Transaction,
         block_number: u64
     ) -> Vec<PoolUpdate> {
         let mut updates = Vec::new();
@@ -494,6 +494,7 @@ where
             let block = self
                 .provider
                 .get_block(BlockId::Number(from_block.into()))
+                .full()
                 .await
                 .map_err(|e| PoolUpdateError::Provider(format!("Failed to get block: {e}")))?
                 .ok_or_else(|| PoolUpdateError::Provider("Block not found".to_string()))?;
@@ -509,6 +510,7 @@ where
                 let block = self
                     .provider
                     .get_block(BlockId::Number(block_num.into()))
+                    .full()
                     .await
                     .map_err(|e| PoolUpdateError::Provider(format!("Failed to get block: {e}")))?;
 
