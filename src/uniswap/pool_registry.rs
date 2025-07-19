@@ -26,6 +26,17 @@ impl UniswapPoolRegistry {
     pub fn public_keys(&self) -> impl Iterator<Item = PoolId> + '_ {
         self.conversion_map.keys().copied()
     }
+
+    pub fn public_key_from_private(&self, pk: &PoolId) -> Option<PoolId> {
+        self.conversion_map
+            .iter()
+            .find(|(_, value)| *value == pk)
+            .map(|(pk, _)| *pk)
+    }
+
+    pub fn private_key_from_public(&self, pk: &PoolId) -> Option<PoolId> {
+        self.conversion_map.get(pk).copied()
+    }
 }
 
 impl From<Vec<PoolKey>> for UniswapPoolRegistry {

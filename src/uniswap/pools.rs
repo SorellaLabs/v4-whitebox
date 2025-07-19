@@ -20,6 +20,14 @@ pub struct UniswapPools {
 }
 
 impl UniswapPools {
+    pub fn new(pools: Arc<DashMap<PoolId, BaselinePoolState>>, block_number: u64) -> Self {
+        Self {
+            pools,
+            block_number: Arc::new(AtomicU64::from(block_number)),
+            notifier: Arc::new(Notify::new())
+        }
+    }
+
     pub fn get_block(&self) -> u64 {
         self.block_number.load(std::sync::atomic::Ordering::SeqCst)
     }

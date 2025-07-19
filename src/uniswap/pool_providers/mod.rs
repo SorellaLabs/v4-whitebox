@@ -4,7 +4,7 @@ use alloy::{providers::Provider, rpc::types::eth::Filter};
 use alloy_primitives::Log;
 use futures::Stream;
 
-use crate::{pool::PoolId, pool_providers::pool_update_provider::PoolUpdate};
+use crate::{pool_providers::pool_update_provider::PoolUpdate, pools::PoolId};
 
 pub mod completed_block_stream;
 pub mod pool_update_provider;

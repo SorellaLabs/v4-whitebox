@@ -33,21 +33,19 @@ const REORG_DETECTION_BLOCKS: u64 = 10;
 alloy::sol! {
     #[derive(Debug, PartialEq, Eq)]
     contract ControllerV1 {
-        event PoolConfigured(
-            address indexed asset0,
-            address indexed asset1,
-            uint24 indexed bundleFee,
-            uint16 tickSpacing,
-            address hook,
-            uint24 feeInE6
-        );
 
-        event PoolRemoved(
-            address indexed asset0,
-            address indexed asset1,
-            uint24 indexed feeInE6,
-            int24 tickSpacing
-        );
+    event PoolConfigured(
+        address indexed asset0,
+        address indexed asset1,
+        uint16 tickSpacing,
+        uint24 bundleFee,
+        uint24 unlockedFee,
+        uint24 protocolUnlockedFee
+    );
+
+    event PoolRemoved(
+        address indexed asset0, address indexed asset1, int24 tickSpacing, uint24 feeInE6
+    );
 
         struct PoolUpdate {
             address assetA;
@@ -56,6 +54,8 @@ alloy::sol! {
             uint24 unlockedFee;
             uint24 protocolUnlockedFee;
         }
+
+
 
         function batchUpdatePools(PoolUpdate[] calldata updates) external;
     }
@@ -260,8 +260,8 @@ where
                 return Some(PoolUpdate::SwapEvent {
                     pool_id:   swap_event.id,
                     block:     block_number,
-                    tx_index:  log.transaction_index.unwrap_or(0),
-                    log_index: log.log_index.unwrap_or(0),
+                    tx_index:  log.transaction_index.unwrap(),
+                    log_index: log.log_index.unwrap(),
                     event:     event_data
                 });
             }
@@ -291,8 +291,8 @@ where
                 if store_in_history {
                     self.add_to_history(StoredEvent {
                         block:           block_number,
-                        tx_index:        log.transaction_index.unwrap_or(0),
-                        log_index:       log.log_index.unwrap_or(0),
+                        tx_index:        log.transaction_index.unwrap(),
+                        log_index:       log.log_index.unwrap(),
                         pool_id:         modify_event.id,
                         liquidity_event: event_data.clone()
                     });
@@ -301,8 +301,8 @@ where
                 return Some(PoolUpdate::LiquidityEvent {
                     pool_id:   modify_event.id,
                     block:     block_number,
-                    tx_index:  log.transaction_index.unwrap_or(0),
-                    log_index: log.log_index.unwrap_or(0),
+                    tx_index:  log.transaction_index.unwrap(),
+                    log_index: log.log_index.unwrap(),
                     event:     event_data
                 });
             }
@@ -315,20 +315,14 @@ where
         let mut updates = Vec::new();
 
         for log in logs {
-            let block_number = log.block_number.unwrap_or(0);
+            let block_number = log.block_number.unwrap();
 
             if let Ok(event) = ControllerV1::PoolConfigured::decode_log(&log.inner) {
                 let pool_key = PoolKey {
                     currency0:   event.asset0,
                     currency1:   event.asset1,
                     fee:         event.bundleFee,
-                    tickSpacing: I24::try_from_be_slice(&{
-                        let bytes = event.tickSpacing.to_be_bytes();
-                        let mut a = [0u8; 3];
-                        a[1..3].copy_from_slice(&bytes);
-                        a
-                    })
-                    .unwrap(),
+                    tickSpacing: I24::unchecked_from(event.tickSpacing),
                     hooks:       self.angstrom_address
                 };
 
@@ -338,8 +332,8 @@ where
                     pool_id,
                     block: block_number,
                     bundle_fee: event.bundleFee.to(),
-                    swap_fee: event.feeInE6.to(),
-                    protocol_fee: 500, // TODO: Determine how to get protocol fee
+                    swap_fee: event.unlockedFee.to(),
+                    protocol_fee: event.protocolUnlockedFee.to(),
                     tick_spacing: event.tickSpacing as i32
                 });
             }
@@ -679,12 +673,18 @@ where
                             fee:            swap_event.fee.to()
                         };
 
+                        // convert private to public
+                        let pool_id = self
+                            .pool_registry
+                            .public_key_from_private(&swap_event.id)
+                            .unwrap();
+
                         all_updates.push(PoolUpdate::SwapEvent {
-                            pool_id:   swap_event.id,
-                            block:     block_number,
-                            tx_index:  log.transaction_index.unwrap(),
+                            pool_id,
+                            block: block_number,
+                            tx_index: log.transaction_index.unwrap(),
                             log_index: log.log_index.unwrap(),
-                            event:     event_data
+                            event: event_data
                         });
                     }
                 }
@@ -692,7 +692,7 @@ where
 
             // Process modify liquidity logs
             for log in modify_logs {
-                let block_number = log.block_number.unwrap_or(0);
+                let block_number = log.block_number.unwrap();
 
                 if let Ok(modify_event) = IUniswapV4Pool::ModifyLiquidity::decode_log(&log.inner) {
                     // Double-check pool ID
@@ -705,12 +705,17 @@ where
                             salt:            modify_event.salt.0
                         };
 
+                        let pool_id = self
+                            .pool_registry
+                            .public_key_from_private(&modify_event.id)
+                            .unwrap();
+
                         all_updates.push(PoolUpdate::LiquidityEvent {
-                            pool_id:   modify_event.id,
-                            block:     block_number,
-                            tx_index:  log.transaction_index.unwrap(),
+                            pool_id,
+                            block: block_number,
+                            tx_index: log.transaction_index.unwrap(),
                             log_index: log.log_index.unwrap(),
-                            event:     event_data
+                            event: event_data
                         });
                     }
                 }
@@ -751,8 +756,8 @@ where
                         pool_id,
                         block: block_number,
                         bundle_fee: event.bundleFee.to(),
-                        swap_fee: event.feeInE6.to(),
-                        protocol_fee: 500, // TODO: Determine how to get protocol fee
+                        swap_fee: event.unlockedFee.to(),
+                        protocol_fee: event.protocolUnlockedFee.to(),
                         tick_spacing: event.tickSpacing as i32
                     });
                 }
@@ -968,7 +973,6 @@ where
                 .saturating_sub(REORG_DETECTION_BLOCKS - 1);
             self.event_history.retain(|e| e.block >= cutoff_block);
         }
-        // If block_number < self.current_block, ignore it (old block)
 
         updates
     }

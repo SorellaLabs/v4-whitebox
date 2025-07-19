@@ -11,7 +11,7 @@ use super::{
     pools::PoolId
 };
 use crate::{
-    pool_providers::PoolEventStream, uni_structure::BaselinePoolState,
+    pool_providers::PoolEventStream, pools::UniswapPools, uni_structure::BaselinePoolState,
     uniswap::pool_providers::pool_update_provider::PoolUpdate
 };
 
@@ -50,7 +50,7 @@ where
     pub(crate) angstrom_address:        Address,
     pub(crate) controller_address:      Address,
     pub(crate) deploy_block:            u64,
-    pub(crate) pools:                   HashMap<PoolId, PoolInfo>,
+    pub(crate) pools:                   UniswapPools,
     pub(crate) current_block:           u64,
     pub(crate) is_bundle_mode:          bool,
     pub(crate) auto_pool_creation:      bool,
@@ -77,12 +77,21 @@ where
     ) -> Result<Self, PoolManagerServiceError> {
         // Set the controller address for the fetch_pool_keys module
         set_controller_address(controller_address);
+        let current_block = provider.get_block_number().await.unwrap();
 
         // Create an empty registry for the factory - we'll populate it during
         // initialization
         let registry = super::pool_registry::UniswapPoolRegistry::default();
-        let factory =
-            BaselinePoolFactory::new(provider.clone(), registry, pool_manager_address, tick_band);
+        let (factory, pools) = BaselinePoolFactory::new(
+            deploy_block,
+            current_block,
+            angstrom_address,
+            provider.clone(),
+            registry,
+            pool_manager_address,
+            tick_band
+        )
+        .await;
 
         let mut service = Self {
             event_stream,
@@ -91,7 +100,7 @@ where
             angstrom_address,
             controller_address,
             deploy_block,
-            pools: HashMap::new(),
+            pools: UniswapPools::new(pools, current_block),
             current_block: deploy_block,
             is_bundle_mode,
             auto_pool_creation: true,

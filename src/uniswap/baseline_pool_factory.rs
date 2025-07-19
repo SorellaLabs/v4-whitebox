@@ -7,6 +7,7 @@ use alloy::{
     },
     providers::Provider
 };
+use dashmap::DashMap;
 use futures::future::join_all;
 use thiserror::Error;
 
@@ -15,6 +16,7 @@ use super::{
     pools::PoolId
 };
 use crate::{
+    fetch_pool_keys::fetch_angstrom_pools,
     uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo},
     uniswap::{pool_key::PoolKey, pool_registry::UniswapPoolRegistry}
 };
@@ -45,18 +47,46 @@ impl<P: Provider + 'static> BaselinePoolFactory<P>
 where
     DataLoader: PoolDataLoader
 {
-    pub fn new(
+    pub async fn new(
+        deploy_block: u64,
+        current_block: u64,
+        angstrom_addr: Address,
         provider: Arc<P>,
         registry: UniswapPoolRegistry,
         pool_manager: Address,
         tick_band: Option<u16>
-    ) -> Self {
-        Self {
+    ) -> (Self, Arc<DashMap<PoolId, BaselinePoolState>>) {
+        // Fetch all existing pool keys
+        let pool_keys = fetch_angstrom_pools(
+            deploy_block as usize,
+            current_block as usize,
+            angstrom_addr,
+            provider.as_ref()
+        )
+        .await;
+
+        let mut this = Self {
             provider,
             registry,
             pool_manager,
             tick_band: tick_band.unwrap_or(INITIAL_TICKS_PER_SIDE)
+        };
+
+        let pools = DashMap::new();
+
+        for pool_key in pool_keys {
+            let pool_id = PoolId::from(pool_key);
+
+            // Use the factory to create and initialize the pool
+            let baseline_state = this
+                .create_new_baseline_angstrom_pool(pool_key, current_block, false)
+                .await
+                .unwrap();
+
+            pools.insert(pool_id, baseline_state);
         }
+
+        (this, Arc::new(pools))
     }
 
     pub fn get_uniswap_pool_ids(&self) -> impl Iterator<Item = PoolId> + '_ {
@@ -99,7 +129,7 @@ where
         mut pool_key: PoolKey,
         block: u64,
         is_bundle_mode: bool
-    ) -> Result<(BaselinePoolState, Address, Address, u8, u8), BaselinePoolFactoryError> {
+    ) -> Result<BaselinePoolState, BaselinePoolFactoryError> {
         // Add to registry
         let pub_key = PoolId::from(pool_key);
         self.registry.pools.insert(pub_key, pool_key);
@@ -115,10 +145,11 @@ where
             .get(&pub_key)
             .expect("new angstrom pool not in conversion map");
 
-        let (baseline_state, t0_dec, t1_dec) = self
+        let baseline_state = self
             .create_baseline_pool_from_registry(*internal, pub_key, block, is_bundle_mode)
             .await?;
-        Ok((baseline_state, pool_key.currency0, pool_key.currency1, t0_dec, t1_dec))
+
+        Ok(baseline_state)
     }
 
     /// Core method that creates BaselinePoolState with complete tick loading
@@ -128,7 +159,7 @@ where
         pool_id: PoolId,
         block: u64,
         is_bundle_mode: bool
-    ) -> Result<(BaselinePoolState, u8, u8), BaselinePoolFactoryError> {
+    ) -> Result<BaselinePoolState, BaselinePoolFactoryError> {
         // Create data loader
         let data_loader = DataLoader::new_with_registry(
             internal_pool_id,
@@ -176,8 +207,12 @@ where
         };
 
         // Create and return BaselinePoolState
-        Ok((
-            BaselinePoolState::new(baseline_liquidity, block, fee_config),
+        Ok(BaselinePoolState::new(
+            baseline_liquidity,
+            block,
+            fee_config,
+            pool_data.tokenA,
+            pool_data.tokenB,
             pool_data.tokenADecimals,
             pool_data.tokenBDecimals
         ))
