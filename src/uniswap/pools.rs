@@ -63,13 +63,19 @@ impl UniswapPools {
                     new_block_number = to_block;
                 }
                 PoolUpdate::SwapEvent { pool_id, event, .. } => {
-                    let mut pool = self.pools.get_mut(&pool_id).unwrap();
+                    let Some(mut pool) = self.pools.get_mut(&pool_id) else {
+                        continue;
+                    };
+
                     let state = pool.value_mut();
                     // update slot0 values
                     state.update_slot0(event.tick, event.sqrt_price_x96.into(), event.liquidity);
                 }
                 PoolUpdate::LiquidityEvent { pool_id, event, .. } => {
-                    let mut pool = self.pools.get_mut(&pool_id).unwrap();
+                    let Some(mut pool) = self.pools.get_mut(&pool_id) else {
+                        continue;
+                    };
+
                     let state = pool.value_mut();
 
                     state.update_liquidity(
@@ -79,7 +85,9 @@ impl UniswapPools {
                     );
                 }
                 PoolUpdate::FeeUpdate { pool_id, bundle_fee, swap_fee, protocol_fee, .. } => {
-                    let mut pool = self.pools.get_mut(&pool_id).unwrap();
+                    let Some(mut pool) = self.pools.get_mut(&pool_id) else {
+                        continue;
+                    };
                     let fees = pool.value_mut().fees_mut();
 
                     fees.bundle_fee = bundle_fee;
@@ -87,7 +95,10 @@ impl UniswapPools {
                     fees.protocol_fee = protocol_fee;
                 }
                 PoolUpdate::UpdatedSlot0 { pool_id, data } => {
-                    let mut pool = self.pools.get_mut(&pool_id).unwrap();
+                    let Some(mut pool) = self.pools.get_mut(&pool_id) else {
+                        continue;
+                    };
+
                     let state = pool.value_mut();
                     state.update_slot0(data.tick, data.sqrt_price_x96.into(), data.liquidity);
                 }

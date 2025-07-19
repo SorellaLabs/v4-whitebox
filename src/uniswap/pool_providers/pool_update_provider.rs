@@ -55,8 +55,6 @@ alloy::sol! {
             uint24 protocolUnlockedFee;
         }
 
-
-
         function batchUpdatePools(PoolUpdate[] calldata updates) external;
     }
 }
@@ -311,7 +309,7 @@ where
     }
 
     /// Process controller event logs
-    fn process_controller_logs(&self, logs: Vec<alloy::rpc::types::Log>) -> Vec<PoolUpdate> {
+    fn process_controller_logs(&mut self, logs: Vec<alloy::rpc::types::Log>) -> Vec<PoolUpdate> {
         let mut updates = Vec::new();
 
         for log in logs {
@@ -325,6 +323,8 @@ where
                     tickSpacing: I24::unchecked_from(event.tickSpacing),
                     hooks:       self.angstrom_address
                 };
+
+                self.pool_registry.add_new_pool(pool_key.clone());
 
                 let pool_id = PoolId::from(pool_key);
 
@@ -1001,7 +1001,8 @@ pub struct StateStream<P: Provider + 'static> {
     processing:
         Option<Pin<Box<dyn Future<Output = (PoolUpdateProvider<P>, Vec<PoolUpdate>)> + Send>>>,
     start_tracking_pools: Vec<PoolId>,
-    stop_tracking_pools:  Vec<PoolId>
+    stop_tracking_pools:  Vec<PoolId>,
+    pool_reg:             Option<UniswapPoolRegistry>
 }
 
 impl<P: Provider + 'static> StateStream<P> {
@@ -1014,7 +1015,8 @@ impl<P: Provider + 'static> StateStream<P> {
             block_stream,
             processing: None,
             start_tracking_pools: vec![],
-            stop_tracking_pools: vec![]
+            stop_tracking_pools: vec![],
+            pool_reg: None
         }
     }
 }
@@ -1033,6 +1035,14 @@ impl<P: Provider + 'static> PoolEventStream for StateStream<P> {
             update_provider.add_pool(pool_id);
         } else {
             self.start_tracking_pools.push(pool_id);
+        }
+    }
+
+    fn set_pool_registry(&mut self, pool_registry: UniswapPoolRegistry) {
+        if let Some(update_provider) = self.update_provider.as_mut() {
+            update_provider.pool_registry = pool_registry;
+        } else {
+            self.pool_reg = Some(pool_registry);
         }
     }
 }
@@ -1062,6 +1072,9 @@ impl<P: Provider + 'static> Stream for StateStream<P> {
         }
         for pool in this.stop_tracking_pools.drain(..) {
             updater.remove_pool(pool);
+        }
+        if let Some(pool_reg) = this.pool_reg.take() {
+            updater.pool_registry = pool_reg;
         }
 
         if let Poll::Ready(Some(new_block)) = this.block_stream.poll_next_unpin(cx) {

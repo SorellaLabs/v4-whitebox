@@ -89,6 +89,10 @@ where
         (this, Arc::new(pools))
     }
 
+    pub fn registry(&self) -> UniswapPoolRegistry {
+        self.registry.clone()
+    }
+
     pub fn get_uniswap_pool_ids(&self) -> impl Iterator<Item = PoolId> + '_ {
         self.registry.private_keys()
     }

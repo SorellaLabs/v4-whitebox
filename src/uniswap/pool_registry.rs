@@ -37,6 +37,15 @@ impl UniswapPoolRegistry {
     pub fn private_key_from_public(&self, pk: &PoolId) -> Option<PoolId> {
         self.conversion_map.get(pk).copied()
     }
+
+    pub fn add_new_pool(&mut self, mut pool_key: PoolKey) {
+        self.pools.insert(pool_key.clone().into(), pool_key.clone());
+
+        let copyed_pub: PoolId = pool_key.clone().into();
+        pool_key.fee = U24::from(0x800000);
+        let priv_key = PoolId::from(pool_key);
+        self.conversion_map.insert(copyed_pub, priv_key);
+    }
 }
 
 impl From<Vec<PoolKey>> for UniswapPoolRegistry {

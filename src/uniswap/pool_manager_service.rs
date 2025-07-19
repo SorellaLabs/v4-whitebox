@@ -108,8 +108,9 @@ where
             initial_tick_range_size: 400
         };
 
-        // Initialize the service immediately
-        service.initialize().await?;
+        service
+            .event_stream
+            .set_pool_registry(service.factory.registry());
 
         // Ensure to register the pool_ids with the state stream.
         for pool_id in service.factory.get_uniswap_pool_ids() {
@@ -119,99 +120,14 @@ where
         Ok(service)
     }
 
-    /// Initialize the service with a fixed set of pools
-    pub(crate) async fn initialize_with_fixed_pools(
-        &mut self,
-        pool_keys: Vec<PoolKey>
-    ) -> Result<(), PoolManagerServiceError> {
-        // Get the current block number
-        let current_block = self.provider.get_block_number().await.map_err(|e| {
-            PoolManagerServiceError::Provider(format!("Failed to get block number: {e}"))
-        })?;
-
-        self.current_block = current_block;
-
-        tracing::info!("Initializing with {} fixed pools", pool_keys.len());
-
-        // Create pools one by one using the factory's create_new_angstrom_pool method
-        for pool_key in pool_keys {
-            let pool_id = PoolId::from(pool_key);
-
-            // Use the factory to create and initialize the pool
-            let (baseline_state, token0, token1, token0_decimals, token1_decimals) = self
-                .factory
-                .create_new_baseline_angstrom_pool(pool_key, current_block, self.is_bundle_mode)
-                .await?;
-
-            let pool_info =
-                PoolInfo { baseline_state, token0, token1, token0_decimals, token1_decimals };
-
-            self.pools.insert(pool_id, pool_info);
-        }
-
-        tracing::info!("Successfully initialized {} pools", self.pools.len());
-        Ok(())
-    }
-
-    /// Initialize the service by fetching all existing pools and creating pool
-    /// instances
-    pub(crate) async fn initialize(&mut self) -> Result<(), PoolManagerServiceError> {
-        // Get the current block number
-        let current_block = self.provider.get_block_number().await.map_err(|e| {
-            PoolManagerServiceError::Provider(format!("Failed to get block number: {e}"))
-        })?;
-
-        self.current_block = current_block;
-
-        // Fetch all existing pool keys
-        let pool_keys = fetch_angstrom_pools(
-            self.deploy_block as usize,
-            current_block as usize,
-            self.angstrom_address,
-            self.provider.as_ref()
-        )
-        .await;
-
-        tracing::info!("Found {} existing pools", pool_keys.len());
-
-        // Create pools one by one using the factory's create_new_angstrom_pool method
-        for pool_key in pool_keys {
-            let pool_id = PoolId::from(pool_key);
-
-            // Use the factory to create and initialize the pool
-            let (baseline_state, token0, token1, token0_decimals, token1_decimals) = self
-                .factory
-                .create_new_baseline_angstrom_pool(pool_key, current_block, self.is_bundle_mode)
-                .await?;
-
-            let pool_info =
-                PoolInfo { baseline_state, token0, token1, token0_decimals, token1_decimals };
-
-            self.pools.insert(pool_id, pool_info);
-        }
-
-        tracing::info!("Successfully initialized {} pools", self.pools.len());
-        Ok(())
-    }
-
     /// Get all currently tracked pools
-    pub fn get_pools(&self) -> &HashMap<PoolId, PoolInfo> {
-        &self.pools
-    }
-
-    /// Get a specific pool by its ID
-    pub fn get_pool(&self, pool_id: &PoolId) -> Option<&PoolInfo> {
-        self.pools.get(pool_id)
+    pub fn get_pools(&self) -> UniswapPools {
+        self.pools.clone()
     }
 
     /// Get the current block number being processed
     pub fn current_block(&self) -> u64 {
         self.current_block
-    }
-
-    /// Get the total number of tracked pools
-    pub fn pool_count(&self) -> usize {
-        self.pools.len()
     }
 
     /// Get all current pool keys
@@ -267,52 +183,6 @@ where
         }
 
         self.current_block = block_number;
-        Ok(())
-    }
-
-    /// Handle creation of a new pool
-    async fn handle_new_pool(
-        &mut self,
-        pool_key: PoolKey,
-        block_number: u64
-    ) -> Result<(), PoolManagerServiceError> {
-        let pool_id = PoolId::from(pool_key);
-        tracing::info!("Creating new pool: {:?}", pool_id);
-
-        // Create new pool using the factory
-        let (baseline_state, token0, token1, token0_decimals, token1_decimals) = self
-            .factory
-            .create_new_baseline_angstrom_pool(pool_key, block_number, self.is_bundle_mode)
-            .await?;
-
-        let pool_info =
-            PoolInfo { baseline_state, token0, token1, token0_decimals, token1_decimals };
-
-        // Add to our tracking map
-        self.pools.insert(pool_id, pool_info);
-
-        tracing::info!("Successfully created and initialized new pool: {:?}", pool_id);
-        Ok(())
-    }
-
-    /// Process a range of blocks
-    pub async fn process_block_range(
-        &mut self,
-        start_block: u64,
-        end_block: u64
-    ) -> Result<(), PoolManagerServiceError> {
-        if start_block > end_block {
-            return Err(PoolManagerServiceError::Provider(
-                "Invalid block range: start > end".to_string()
-            ));
-        }
-
-        tracing::info!("Processing block range {} to {}", start_block, end_block);
-
-        for block in start_block..=end_block {
-            self.handle_new_block(block).await?;
-        }
-
         Ok(())
     }
 
