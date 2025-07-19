@@ -6,18 +6,23 @@ use thiserror::Error;
 use super::{
     baseline_pool_factory::{BaselinePoolFactory, BaselinePoolFactoryError},
     fetch_pool_keys::{fetch_angstrom_pools, set_controller_address},
-    pool::PoolId,
     pool_data_loader::DataLoader,
-    pool_key::PoolKey
+    pool_key::PoolKey,
+    pools::PoolId
 };
-use crate::uni_structure::BaselinePoolState;
+use crate::{
+    pool_providers::PoolEventStream, pools::UniswapPools, uni_structure::BaselinePoolState,
+    uniswap::pool_providers::pool_update_provider::PoolUpdate
+};
 
 /// Pool information combining BaselinePoolState with token metadata
 #[derive(Debug, Clone)]
 pub struct PoolInfo {
-    pub baseline_state: BaselinePoolState,
-    pub token0:         Address,
-    pub token1:         Address
+    pub baseline_state:  BaselinePoolState,
+    pub token0:          Address,
+    pub token1:          Address,
+    pub token0_decimals: u8,
+    pub token1_decimals: u8
 }
 
 #[derive(Error, Debug)]
@@ -34,117 +39,95 @@ pub enum PoolManagerServiceError {
 
 /// Service for managing Uniswap V4 pools with real-time block subscription
 /// updates
-pub struct PoolManagerService<P>
-where
-    P: Provider + Clone + 'static
-{
-    factory:            BaselinePoolFactory<P>,
-    provider:           Arc<P>,
-    angstrom_address:   Address,
-    controller_address: Address,
-    deploy_block:       u64,
-    pools:              HashMap<PoolId, PoolInfo>,
-    current_block:      u64,
-    is_bundle_mode:     bool
-}
-
-impl<P> PoolManagerService<P>
+pub struct PoolManagerService<P, Event, S = ()>
 where
     P: Provider + Clone + 'static,
-    DataLoader: super::pool_data_loader::PoolDataLoader
+    Event: PoolEventStream
+{
+    pub(crate) factory:                 BaselinePoolFactory<P>,
+    pub(crate) event_stream:            Event,
+    pub(crate) provider:                Arc<P>,
+    pub(crate) angstrom_address:        Address,
+    pub(crate) controller_address:      Address,
+    pub(crate) deploy_block:            u64,
+    pub(crate) pools:                   UniswapPools,
+    pub(crate) current_block:           u64,
+    pub(crate) is_bundle_mode:          bool,
+    pub(crate) auto_pool_creation:      bool,
+    pub(crate) slot0_stream:            Option<S>,
+    pub(crate) initial_tick_range_size: u16
+}
+
+impl<P, Event, S> PoolManagerService<P, Event, S>
+where
+    P: Provider + Clone + 'static,
+    DataLoader: super::pool_data_loader::PoolDataLoader,
+    Event: PoolEventStream
 {
     /// Create a new PoolManagerService and initialize it with existing pools
     pub async fn new(
         provider: Arc<P>,
+        event_stream: Event,
         angstrom_address: Address,
         controller_address: Address,
         pool_manager_address: Address,
         deploy_block: u64,
-        is_bundle_mode: bool
+        is_bundle_mode: bool,
+        tick_band: Option<u16>
     ) -> Result<Self, PoolManagerServiceError> {
         // Set the controller address for the fetch_pool_keys module
         set_controller_address(controller_address);
+        let current_block = provider.get_block_number().await.unwrap();
 
         // Create an empty registry for the factory - we'll populate it during
         // initialization
         let registry = super::pool_registry::UniswapPoolRegistry::default();
-        let factory = BaselinePoolFactory::new(provider.clone(), registry, pool_manager_address);
+        let (factory, pools) = BaselinePoolFactory::new(
+            deploy_block,
+            current_block,
+            angstrom_address,
+            provider.clone(),
+            registry,
+            pool_manager_address,
+            tick_band
+        )
+        .await;
 
         let mut service = Self {
+            event_stream,
             factory,
             provider,
             angstrom_address,
             controller_address,
             deploy_block,
-            pools: HashMap::new(),
+            pools: UniswapPools::new(pools, current_block),
             current_block: deploy_block,
-            is_bundle_mode
+            is_bundle_mode,
+            auto_pool_creation: true,
+            slot0_stream: None,
+            initial_tick_range_size: 400
         };
 
-        // Initialize the service immediately
-        service.initialize().await?;
+        service
+            .event_stream
+            .set_pool_registry(service.factory.registry());
+
+        // Ensure to register the pool_ids with the state stream.
+        for pool_id in service.factory.get_uniswap_pool_ids() {
+            service.event_stream.start_tracking_pool(pool_id);
+        }
 
         Ok(service)
     }
 
-    /// Initialize the service by fetching all existing pools and creating pool
-    /// instances
-    pub async fn initialize(&mut self) -> Result<(), PoolManagerServiceError> {
-        // Get the current block number
-        let current_block = self.provider.get_block_number().await.map_err(|e| {
-            PoolManagerServiceError::Provider(format!("Failed to get block number: {}", e))
-        })?;
-
-        self.current_block = current_block;
-
-        // Fetch all existing pool keys
-        let pool_keys = fetch_angstrom_pools(
-            self.deploy_block as usize,
-            current_block as usize,
-            self.angstrom_address,
-            self.provider.as_ref()
-        )
-        .await;
-
-        tracing::info!("Found {} existing pools", pool_keys.len());
-
-        // Create pools one by one using the factory's create_new_angstrom_pool method
-        for pool_key in pool_keys {
-            let pool_id = PoolId::from(pool_key);
-
-            // Use the factory to create and initialize the pool
-            let (baseline_state, token0, token1) = self
-                .factory
-                .create_new_baseline_angstrom_pool(pool_key, current_block, self.is_bundle_mode)
-                .await?;
-
-            let pool_info = PoolInfo { baseline_state, token0, token1 };
-
-            self.pools.insert(pool_id, pool_info);
-        }
-
-        tracing::info!("Successfully initialized {} pools", self.pools.len());
-        Ok(())
-    }
-
     /// Get all currently tracked pools
-    pub fn get_pools(&self) -> &HashMap<PoolId, PoolInfo> {
-        &self.pools
-    }
-
-    /// Get a specific pool by its ID
-    pub fn get_pool(&self, pool_id: &PoolId) -> Option<&PoolInfo> {
-        self.pools.get(pool_id)
+    pub fn get_pools(&self) -> UniswapPools {
+        self.pools.clone()
     }
 
     /// Get the current block number being processed
     pub fn current_block(&self) -> u64 {
         self.current_block
-    }
-
-    /// Get the total number of tracked pools
-    pub fn pool_count(&self) -> usize {
-        self.pools.len()
     }
 
     /// Get all current pool keys
@@ -185,11 +168,16 @@ where
             for pool_key in updated_pool_keys {
                 let pool_id = PoolId::from(pool_key);
 
-                // Check if this is a new pool
-                if !self.pools.contains_key(&pool_id) {
+                // Check if this is a new pool and auto_pool_creation is enabled
+                if !self.pools.contains_key(&pool_id) && self.auto_pool_creation {
                     if let Err(e) = self.handle_new_pool(pool_key, block_number).await {
                         tracing::error!("Failed to create new pool {:?}: {}", pool_id, e);
                     }
+                } else if !self.auto_pool_creation && !self.pools.contains_key(&pool_id) {
+                    tracing::debug!(
+                        "Skipping new pool {:?} - auto pool creation disabled",
+                        pool_id
+                    );
                 }
             }
         }
@@ -198,235 +186,74 @@ where
         Ok(())
     }
 
-    /// Handle creation of a new pool
-    async fn handle_new_pool(
+    /// Process a pool update event from the PoolUpdateProvider
+    pub async fn process_pool_update(
         &mut self,
-        pool_key: PoolKey,
-        block_number: u64
+        update: PoolUpdate
     ) -> Result<(), PoolManagerServiceError> {
-        let pool_id = PoolId::from(pool_key);
-        tracing::info!("Creating new pool: {:?}", pool_id);
-
-        // Create new pool using the factory
-        let (baseline_state, token0, token1) = self
-            .factory
-            .create_new_baseline_angstrom_pool(pool_key, block_number, self.is_bundle_mode)
-            .await?;
-
-        let pool_info = PoolInfo { baseline_state, token0, token1 };
-
-        // Add to our tracking map
-        self.pools.insert(pool_id, pool_info);
-
-        tracing::info!("Successfully created and initialized new pool: {:?}", pool_id);
+        match update {
+            PoolUpdate::NewBlock(block_number) => {
+                self.current_block = block_number;
+            }
+            PoolUpdate::SwapEvent { pool_id, event, .. } => {
+                // TODO: Apply swap event to pool state
+                // This should update the pool's current price, tick, and liquidity
+                tracing::debug!("Swap event for pool {:?}: {:?}", pool_id, event);
+            }
+            PoolUpdate::LiquidityEvent { pool_id, event, .. } => {
+                // TODO: Apply liquidity event to pool state
+                // This should modify the pool's liquidity at the specified tick range
+                tracing::debug!("Liquidity event for pool {:?}: {:?}", pool_id, event);
+            }
+            PoolUpdate::PoolConfigured {
+                pool_id,
+                bundle_fee,
+                swap_fee,
+                protocol_fee,
+                tick_spacing,
+                ..
+            } => {
+                // TODO: Create new pool with proper fee configuration
+                // fee_config = FeeConfiguration {
+                //     is_bundle_mode: determine based on context,
+                //     bundle_fee,
+                //     swap_fee,
+                //     protocol_fee
+                // }
+                tracing::info!(
+                    "Pool configured: {:?}, bundle_fee: {}, swap_fee: {}, protocol_fee: {}, \
+                     tick_spacing: {}",
+                    pool_id,
+                    bundle_fee,
+                    swap_fee,
+                    protocol_fee,
+                    tick_spacing
+                );
+            }
+            PoolUpdate::PoolRemoved { pool_id, .. } => {
+                // TODO: Remove pool from tracking
+                tracing::info!("Pool removed: {:?}", pool_id);
+                self.pools.remove(&pool_id);
+            }
+            PoolUpdate::FeeUpdate { pool_id, bundle_fee, swap_fee, protocol_fee, .. } => {
+                // TODO: Update existing pool's fee configuration
+                tracing::info!(
+                    "Fee update for pool {:?}: bundle_fee: {}, swap_fee: {}, protocol_fee: {}",
+                    pool_id,
+                    bundle_fee,
+                    swap_fee,
+                    protocol_fee
+                );
+            }
+            PoolUpdate::UpdatedSlot0 { pool_id, data } => {
+                // TODO: Update pool state from slot0 data after reorg
+                tracing::debug!("Updated slot0 for pool {:?}: {:?}", pool_id, data);
+            }
+            PoolUpdate::Reorg { from_block, to_block } => {
+                // TODO: Handle reorg - may need to reload pool states
+                tracing::warn!("Reorg detected from block {} to {}", from_block, to_block);
+            }
+        }
         Ok(())
-    }
-
-    /// Update the service to the latest block, processing all intermediate
-    /// blocks
-    pub async fn update_to_latest_block(&mut self) -> Result<u64, PoolManagerServiceError> {
-        let latest_block = self.provider.get_block_number().await.map_err(|e| {
-            PoolManagerServiceError::Provider(format!("Failed to get latest block: {}", e))
-        })?;
-
-        if latest_block > self.current_block {
-            tracing::info!("Updating from block {} to {}", self.current_block, latest_block);
-            self.handle_new_block(latest_block).await?;
-        }
-
-        Ok(latest_block)
-    }
-
-    /// Process a range of blocks
-    pub async fn process_block_range(
-        &mut self,
-        start_block: u64,
-        end_block: u64
-    ) -> Result<(), PoolManagerServiceError> {
-        if start_block > end_block {
-            return Err(PoolManagerServiceError::Provider(
-                "Invalid block range: start > end".to_string()
-            ));
-        }
-
-        tracing::info!("Processing block range {} to {}", start_block, end_block);
-
-        for block in start_block..=end_block {
-            self.handle_new_block(block).await?;
-        }
-
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use alloy::{
-        primitives::address,
-        providers::{Provider, ProviderBuilder}
-    };
-
-    use super::*;
-
-    /// Mock provider for unit testing
-    struct MockProvider {
-        current_block: u64,
-        should_fail:   bool
-    }
-
-    impl MockProvider {
-        fn new(current_block: u64) -> Self {
-            Self { current_block, should_fail: false }
-        }
-
-        fn with_failure() -> Self {
-            Self { current_block: 1000, should_fail: true }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_service_creation_with_mock() {
-        let provider = Arc::new(
-            ProviderBuilder::new()
-                .connect("https://eth.llamarpc.com")
-                .await
-                .expect("Failed to connect")
-        );
-
-        let angstrom_addr = address!("0x1111111111111111111111111111111111111111");
-        let controller_addr = address!("0x2222222222222222222222222222222222222222");
-        let pool_manager_addr = address!("0x3333333333333333333333333333333333333333");
-
-        // Use current block - 100 to avoid large range
-        let current_block = provider.get_block_number().await.unwrap_or(1000);
-        let deploy_block = current_block.saturating_sub(100);
-
-        // This will likely fail due to network issues in testing, but we can test the
-        // structure
-        let result = PoolManagerService::new(
-            provider,
-            angstrom_addr,
-            controller_addr,
-            pool_manager_addr,
-            deploy_block,
-            false // Default to unlocked mode for tests
-        )
-        .await;
-
-        // Verify that the function signature and error handling work
-        match result {
-            Ok(service) => {
-                assert!(service.current_block() >= deploy_block);
-                // May or may not have pools, depends on the test environment
-            }
-            Err(e) => {
-                // Expected to fail in test environment due to network/contract issues
-                assert!(matches!(e, PoolManagerServiceError::Provider(_)));
-                println!("Expected test failure: {:?}", e);
-            }
-        }
-    }
-
-    #[test]
-    fn test_error_types() {
-        let provider_error = PoolManagerServiceError::Provider("Test error".to_string());
-        let pool_init_error = PoolManagerServiceError::PoolInit("Test error".to_string());
-        let pool_factory_error = PoolManagerServiceError::PoolFactory("Test error".to_string());
-
-        // Verify error types implement expected traits
-        assert!(format!("{}", provider_error).contains("Provider error"));
-        assert!(format!("{}", pool_init_error).contains("Pool initialization error"));
-        assert!(format!("{}", pool_factory_error).contains("Pool factory error"));
-
-        // Verify Debug implementation
-        assert!(format!("{:?}", provider_error).contains("Provider"));
-    }
-
-    #[test]
-    fn test_constants_and_types() {
-        // Test that our types and constants are valid
-        let angstrom_addr = address!("0x1111111111111111111111111111111111111111");
-        let controller_addr = address!("0x2222222222222222222222222222222222222222");
-        let pool_manager_addr = address!("0x3333333333333333333333333333333333333333");
-
-        assert_ne!(angstrom_addr, Address::ZERO);
-        assert_ne!(controller_addr, Address::ZERO);
-        assert_ne!(pool_manager_addr, Address::ZERO);
-
-        // Verify addresses are different
-        assert_ne!(angstrom_addr, controller_addr);
-        assert_ne!(angstrom_addr, pool_manager_addr);
-        assert_ne!(controller_addr, pool_manager_addr);
-    }
-
-    #[tokio::test]
-    async fn test_invalid_block_range() {
-        let provider = Arc::new(
-            ProviderBuilder::new()
-                .connect("https://eth.llamarpc.com")
-                .await
-                .expect("Failed to connect")
-        );
-
-        // Get current block and use a very recent deploy block to avoid large ranges
-        let current_block = provider.get_block_number().await.unwrap_or(1000000);
-        let deploy_block = current_block.saturating_sub(10); // Use very recent block to avoid large range
-
-        // Use different addresses to avoid controller collision
-        let result = PoolManagerService::new(
-            provider,
-            address!("0x1111111111111111111111111111111111111111"),
-            address!("0x2222222222222222222222222222222222222222"),
-            address!("0x3333333333333333333333333333333333333333"),
-            deploy_block,
-            false // Default to unlocked mode for tests
-        )
-        .await;
-
-        if let Ok(mut service) = result {
-            // Test invalid block range (start > end)
-            let result = service.process_block_range(1000, 999).await;
-            assert!(result.is_err());
-
-            if let Err(PoolManagerServiceError::Provider(msg)) = result {
-                assert!(msg.contains("Invalid block range"));
-            }
-        } else {
-            // If service creation fails, test the range validation logic directly
-            // This is expected due to network/contract issues in test environment
-            println!("Service creation failed as expected in test environment");
-        }
-    }
-
-    #[test]
-    fn test_pool_id_operations() {
-        use alloy::primitives::aliases::{I24, U24};
-
-        use crate::uniswap::pool_key::PoolKey;
-
-        // Create a test pool key
-        let pool_key = PoolKey {
-            currency0:   address!("0x1111111111111111111111111111111111111111"),
-            currency1:   address!("0x2222222222222222222222222222222222222222"),
-            fee:         U24::from(3000),
-            tickSpacing: I24::unchecked_from(60),
-            hooks:       address!("0x3333333333333333333333333333333333333333")
-        };
-
-        // Test that we can create a PoolId from PoolKey
-        let pool_id = PoolId::from(pool_key);
-        assert_ne!(pool_id, PoolId::ZERO);
-
-        // Test that the same pool key produces the same ID
-        let pool_id2 = PoolId::from(pool_key);
-        assert_eq!(pool_id, pool_id2);
-
-        // Test that different pool keys produce different IDs
-        let mut pool_key2 = pool_key;
-        pool_key2.fee = U24::from(10000);
-        let pool_id3 = PoolId::from(pool_key2);
-        assert_ne!(pool_id, pool_id3);
     }
 }

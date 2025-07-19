@@ -38,13 +38,13 @@ pub fn set_controller_address(address: Address) {
     CONTROLLER_V1_ADDRESS.set(address).unwrap_or_else(|_| {
         // In test environments, controller address might already be set
         // This is acceptable as long as it's the same address
-        if let Some(existing) = CONTROLLER_V1_ADDRESS.get() {
-            if *existing != address {
-                panic!(
-                    "Controller address already set to different value: existing={:?}, new={:?}",
-                    existing, address
-                );
-            }
+        if let Some(existing) = CONTROLLER_V1_ADDRESS.get()
+            && *existing != address
+        {
+            panic!(
+                "Controller address already set to different value: existing={existing:?}, \
+                 new={address:?}"
+            );
         }
     });
 }
@@ -105,13 +105,7 @@ where
                     currency0:   pool.asset0,
                     currency1:   pool.asset1,
                     fee:         pool.bundleFee,
-                    tickSpacing: I24::try_from_be_slice(&{
-                        let bytes = pool.tickSpacing.to_be_bytes();
-                        let mut a = [0u8; 3];
-                        a[1..3].copy_from_slice(&bytes);
-                        a
-                    })
-                    .unwrap(),
+                    tickSpacing: I24::unchecked_from(pool.tickSpacing),
                     hooks:       angstrom_address
                 };
 

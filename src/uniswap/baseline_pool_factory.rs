@@ -7,14 +7,16 @@ use alloy::{
     },
     providers::Provider
 };
+use dashmap::DashMap;
 use futures::future::join_all;
 use thiserror::Error;
 
 use super::{
-    pool::PoolId,
-    pool_data_loader::{DataLoader, PoolDataLoader, TickData}
+    pool_data_loader::{DataLoader, PoolDataLoader, TickData},
+    pools::PoolId
 };
 use crate::{
+    fetch_pool_keys::fetch_angstrom_pools,
     uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo},
     uniswap::{pool_key::PoolKey, pool_registry::UniswapPoolRegistry}
 };
@@ -37,32 +39,91 @@ pub enum BaselinePoolFactoryError {
 pub struct BaselinePoolFactory<P> {
     provider:     Arc<P>,
     registry:     UniswapPoolRegistry,
-    pool_manager: Address
+    pool_manager: Address,
+    tick_band:    u16
 }
 
 impl<P: Provider + 'static> BaselinePoolFactory<P>
 where
     DataLoader: PoolDataLoader
 {
-    pub fn new(provider: Arc<P>, registry: UniswapPoolRegistry, pool_manager: Address) -> Self {
-        Self { provider, registry, pool_manager }
+    pub async fn new(
+        deploy_block: u64,
+        current_block: u64,
+        angstrom_addr: Address,
+        provider: Arc<P>,
+        registry: UniswapPoolRegistry,
+        pool_manager: Address,
+        tick_band: Option<u16>
+    ) -> (Self, Arc<DashMap<PoolId, BaselinePoolState>>) {
+        // Fetch all existing pool keys
+        let pool_keys = fetch_angstrom_pools(
+            deploy_block as usize,
+            current_block as usize,
+            angstrom_addr,
+            provider.as_ref()
+        )
+        .await;
+
+        let mut this = Self {
+            provider,
+            registry,
+            pool_manager,
+            tick_band: tick_band.unwrap_or(INITIAL_TICKS_PER_SIDE)
+        };
+
+        let pools = DashMap::new();
+
+        for pool_key in pool_keys {
+            let pool_id = PoolId::from(pool_key);
+
+            // Use the factory to create and initialize the pool
+            let baseline_state = this
+                .create_new_baseline_angstrom_pool(pool_key, current_block, false)
+                .await
+                .unwrap();
+
+            pools.insert(pool_id, baseline_state);
+        }
+
+        (this, Arc::new(pools))
+    }
+
+    pub fn registry(&self) -> UniswapPoolRegistry {
+        self.registry.clone()
+    }
+
+    pub fn get_uniswap_pool_ids(&self) -> impl Iterator<Item = PoolId> + '_ {
+        self.registry.private_keys()
     }
 
     /// Creates a BaselinePoolState with full tick loading from existing pools
     /// in registry
-    pub async fn init_baseline_pools(&self, block: u64) -> Vec<BaselinePoolState> {
-        join_all(self.registry.pools().keys().map(async |pool_id| {
+    pub async fn init_baseline_pools(
+        &self,
+        block: u64,
+        is_bundle_mode: bool
+    ) -> Vec<BaselinePoolState> {
+        let pool_ids: Vec<_> = self.registry.pools().keys().copied().collect();
+        let mut futures = Vec::new();
+
+        for pool_id in pool_ids {
             let internal = self
                 .registry
                 .conversion_map
-                .get(pool_id)
+                .get(&pool_id)
                 .expect("factory conversion map failure");
 
-            self.create_baseline_pool_from_registry(*internal, *pool_id, block, false) // Default to unlocked mode
-                .await
-                .expect("failed to init baseline pool")
-        }))
-        .await
+            let future =
+                self.create_baseline_pool_from_registry(*internal, pool_id, block, is_bundle_mode);
+            futures.push(future);
+        }
+
+        let results = join_all(futures).await;
+        results
+            .into_iter()
+            .map(|result| result.expect("failed to init baseline pool").0)
+            .collect()
     }
 
     /// Creates a new BaselinePoolState with full tick loading for Angstrom
@@ -72,14 +133,14 @@ where
         mut pool_key: PoolKey,
         block: u64,
         is_bundle_mode: bool
-    ) -> Result<(BaselinePoolState, Address, Address), BaselinePoolFactoryError> {
+    ) -> Result<BaselinePoolState, BaselinePoolFactoryError> {
         // Add to registry
-        let pub_key = PoolId::from(pool_key.clone());
-        self.registry.pools.insert(pub_key, pool_key.clone());
+        let pub_key = PoolId::from(pool_key);
+        self.registry.pools.insert(pub_key, pool_key);
 
         // Create private key
         pool_key.fee = U24::from(0x800000);
-        let priv_key = PoolId::from(pool_key.clone());
+        let priv_key = PoolId::from(pool_key);
         self.registry.conversion_map.insert(pub_key, priv_key);
 
         let internal = self
@@ -91,7 +152,8 @@ where
         let baseline_state = self
             .create_baseline_pool_from_registry(*internal, pub_key, block, is_bundle_mode)
             .await?;
-        Ok((baseline_state, pool_key.currency0, pool_key.currency1))
+
+        Ok(baseline_state)
     }
 
     /// Core method that creates BaselinePoolState with complete tick loading
@@ -115,10 +177,7 @@ where
             .load_pool_data(Some(block), self.provider.clone())
             .await
             .map_err(|e| {
-                BaselinePoolFactoryError::PoolDataLoading(format!(
-                    "Failed to load pool data: {}",
-                    e
-                ))
+                BaselinePoolFactoryError::PoolDataLoading(format!("Failed to load pool data: {e}"))
             })?;
 
         // Extract basic pool state
@@ -130,7 +189,7 @@ where
 
         // Load ticks in both directions
         let (ticks, tick_bitmap) = self
-            .load_complete_tick_data(&data_loader, tick, tick_spacing, Some(block))
+            .load_tick_data_in_band(&data_loader, tick, tick_spacing, Some(block))
             .await?;
 
         // Create BaselineLiquidity with loaded tick data
@@ -152,11 +211,19 @@ where
         };
 
         // Create and return BaselinePoolState
-        Ok(BaselinePoolState::new(baseline_liquidity, block, fee_config))
+        Ok(BaselinePoolState::new(
+            baseline_liquidity,
+            block,
+            fee_config,
+            pool_data.tokenA,
+            pool_data.tokenB,
+            pool_data.tokenADecimals,
+            pool_data.tokenBDecimals
+        ))
     }
 
     /// Loads complete tick data in both directions around the current tick
-    async fn load_complete_tick_data(
+    async fn load_tick_data_in_band(
         &self,
         data_loader: &DataLoader,
         current_tick: i32,
@@ -209,9 +276,9 @@ where
         let mut tick_start = current_tick;
         let mut ticks_loaded = 0u16;
 
-        while ticks_loaded < INITIAL_TICKS_PER_SIDE {
+        while ticks_loaded < self.tick_band {
             let ticks_to_load =
-                std::cmp::min(TICKS_PER_BATCH as u16, INITIAL_TICKS_PER_SIDE - ticks_loaded);
+                std::cmp::min(TICKS_PER_BATCH as u16, self.tick_band - ticks_loaded);
 
             let (batch_ticks, next_tick) = self
                 .get_tick_data_batch_request(
@@ -259,10 +326,7 @@ where
             )
             .await
             .map_err(|e| {
-                BaselinePoolFactoryError::PoolDataLoading(format!(
-                    "Failed to load tick data: {}",
-                    e
-                ))
+                BaselinePoolFactoryError::PoolDataLoading(format!("Failed to load tick data: {e}"))
             })?;
 
         // Calculate next tick start position
@@ -293,9 +357,8 @@ where
         // Process only initialized ticks
         for tick_data in fetched_ticks.into_iter().filter(|t| t.initialized) {
             let tick_info = TickInfo {
-                initialized:     tick_data.initialized,
-                liquidity_gross: tick_data.liquidityGross,
-                liquidity_net:   tick_data.liquidityNet
+                initialized:   tick_data.initialized,
+                liquidity_net: tick_data.liquidityNet
             };
 
             ticks.insert(tick_data.tick.as_i32(), tick_info);

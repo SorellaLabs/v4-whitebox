@@ -1,4 +1,4 @@
-use alloy::primitives::I256;
+use alloy::primitives::{Address, I256};
 use liquidity_base::BaselineLiquidity;
 use pool_swap::{PoolSwap, PoolSwapResult};
 use serde::{Deserialize, Serialize};
@@ -21,18 +21,50 @@ pub mod tick_info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaselinePoolState {
-    liquidity:  BaselineLiquidity,
-    block:      u64,
-    fee_config: FeeConfiguration
+    liquidity:           BaselineLiquidity,
+    block:               u64,
+    fee_config:          FeeConfiguration,
+    pub token0:          Address,
+    pub token1:          Address,
+    pub token0_decimals: u8,
+    pub token1_decimals: u8
 }
 
 impl BaselinePoolState {
-    pub fn new(liquidity: BaselineLiquidity, block: u64, fee_config: FeeConfiguration) -> Self {
-        Self { liquidity, block, fee_config }
+    pub fn new(
+        liquidity: BaselineLiquidity,
+        block: u64,
+        fee_config: FeeConfiguration,
+        token0: Address,
+        token1: Address,
+        token0_decimals: u8,
+        token1_decimals: u8
+    ) -> Self {
+        Self { liquidity, block, fee_config, token1, token0, token0_decimals, token1_decimals }
+    }
+
+    pub fn update_slot0(
+        &mut self,
+        start_tick: i32,
+        start_sqrt_price: SqrtPriceX96,
+        start_liquidity: u128
+    ) {
+        self.liquidity.start_tick = start_tick;
+        self.liquidity.start_sqrt_price = start_sqrt_price;
+        self.liquidity.start_liquidity = start_liquidity;
+    }
+
+    pub fn update_liquidity(&mut self, tick_lower: i32, tick_upper: i32, liquidity_delta: I256) {
+        self.liquidity
+            .update_liquidity_from_event(tick_lower, tick_upper, liquidity_delta);
     }
 
     pub fn block_number(&self) -> u64 {
         self.block
+    }
+
+    pub fn fees_mut(&mut self) -> &mut FeeConfiguration {
+        &mut self.fee_config
     }
 
     pub fn fee(&self) -> u32 {
