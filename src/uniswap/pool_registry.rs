@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use alloy::primitives::aliases::U24;
 
-use super::{pool::PoolId, pool_key::PoolKey};
+use super::{pool_key::PoolKey, pools::PoolId};
 
 #[derive(Debug, Default, Clone)]
 pub struct UniswapPoolRegistry {

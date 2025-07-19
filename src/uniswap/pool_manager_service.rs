@@ -6,9 +6,9 @@ use thiserror::Error;
 use super::{
     baseline_pool_factory::{BaselinePoolFactory, BaselinePoolFactoryError},
     fetch_pool_keys::{fetch_angstrom_pools, set_controller_address},
-    pool::PoolId,
     pool_data_loader::DataLoader,
-    pool_key::PoolKey
+    pool_key::PoolKey,
+    pools::PoolId
 };
 use crate::{
     pool_providers::PoolEventStream, uni_structure::BaselinePoolState,
@@ -72,7 +72,8 @@ where
         controller_address: Address,
         pool_manager_address: Address,
         deploy_block: u64,
-        is_bundle_mode: bool
+        is_bundle_mode: bool,
+        tick_band: Option<u16>
     ) -> Result<Self, PoolManagerServiceError> {
         // Set the controller address for the fetch_pool_keys module
         set_controller_address(controller_address);
@@ -80,7 +81,8 @@ where
         // Create an empty registry for the factory - we'll populate it during
         // initialization
         let registry = super::pool_registry::UniswapPoolRegistry::default();
-        let factory = BaselinePoolFactory::new(provider.clone(), registry, pool_manager_address);
+        let factory =
+            BaselinePoolFactory::new(provider.clone(), registry, pool_manager_address, tick_band);
 
         let mut service = Self {
             event_stream,

@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{HashSet, VecDeque},
     pin::Pin,
     sync::Arc,
@@ -19,10 +20,10 @@ use thiserror::Error;
 use crate::{
     pool_providers::{PoolEventStream, completed_block_stream::CompletedBlockStream},
     uniswap::{
-        pool::PoolId,
         pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
         pool_key::PoolKey,
-        pool_registry::UniswapPoolRegistry
+        pool_registry::UniswapPoolRegistry,
+        pools::PoolId
     }
 };
 
@@ -114,6 +115,30 @@ pub enum PoolUpdate {
     Reorg { from_block: u64, to_block: u64 },
     /// Updated slot0 data after reorg
     UpdatedSlot0 { pool_id: PoolId, data: Slot0Data }
+}
+
+impl PoolUpdate {
+    pub fn sort(&self, b: &Self) -> Ordering {
+        let (this_tx_index, this_log_index) = match self {
+            PoolUpdate::SwapEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
+            PoolUpdate::LiquidityEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
+            _ => (u64::MAX, u64::MAX)
+        };
+
+        let (other_tx_index, other_log_index) = match b {
+            PoolUpdate::SwapEvent { pool_id, block, tx_index, log_index, event } => {
+                (*tx_index, *log_index)
+            }
+            PoolUpdate::LiquidityEvent { pool_id, block, tx_index, log_index, event } => {
+                (*tx_index, *log_index)
+            }
+            _ => (u64::MAX, u64::MAX)
+        };
+
+        this_tx_index
+            .cmp(&other_tx_index)
+            .then_with(|| this_log_index.cmp(&other_log_index))
+    }
 }
 
 /// Swap event data

@@ -7,13 +7,13 @@ use thiserror::Error;
 pub mod baseline_pool_factory;
 pub mod fetch_pool_keys;
 pub mod loaders;
-pub mod pool;
 pub mod pool_data_loader;
 pub mod pool_key;
 pub mod pool_manager_service;
 pub mod pool_manager_service_builder;
 pub mod pool_providers;
 pub mod pool_registry;
+pub mod pools;
 
 const MIN_I24: i32 = -8_388_608_i32;
 const MAX_I24: i32 = 8_388_607_i32;

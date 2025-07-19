@@ -11,8 +11,8 @@ use futures::future::join_all;
 use thiserror::Error;
 
 use super::{
-    pool::PoolId,
-    pool_data_loader::{DataLoader, PoolDataLoader, TickData}
+    pool_data_loader::{DataLoader, PoolDataLoader, TickData},
+    pools::PoolId
 };
 use crate::{
     uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo},
@@ -37,15 +37,26 @@ pub enum BaselinePoolFactoryError {
 pub struct BaselinePoolFactory<P> {
     provider:     Arc<P>,
     registry:     UniswapPoolRegistry,
-    pool_manager: Address
+    pool_manager: Address,
+    tick_band:    u16
 }
 
 impl<P: Provider + 'static> BaselinePoolFactory<P>
 where
     DataLoader: PoolDataLoader
 {
-    pub fn new(provider: Arc<P>, registry: UniswapPoolRegistry, pool_manager: Address) -> Self {
-        Self { provider, registry, pool_manager }
+    pub fn new(
+        provider: Arc<P>,
+        registry: UniswapPoolRegistry,
+        pool_manager: Address,
+        tick_band: Option<u16>
+    ) -> Self {
+        Self {
+            provider,
+            registry,
+            pool_manager,
+            tick_band: tick_band.unwrap_or(INITIAL_TICKS_PER_SIDE)
+        }
     }
 
     pub fn get_uniswap_pool_ids(&self) -> impl Iterator<Item = PoolId> + '_ {
@@ -143,7 +154,7 @@ where
 
         // Load ticks in both directions
         let (ticks, tick_bitmap) = self
-            .load_complete_tick_data(&data_loader, tick, tick_spacing, Some(block))
+            .load_tick_data_in_band(&data_loader, tick, tick_spacing, Some(block))
             .await?;
 
         // Create BaselineLiquidity with loaded tick data
@@ -173,7 +184,7 @@ where
     }
 
     /// Loads complete tick data in both directions around the current tick
-    async fn load_complete_tick_data(
+    async fn load_tick_data_in_band(
         &self,
         data_loader: &DataLoader,
         current_tick: i32,
@@ -226,9 +237,9 @@ where
         let mut tick_start = current_tick;
         let mut ticks_loaded = 0u16;
 
-        while ticks_loaded < INITIAL_TICKS_PER_SIDE {
+        while ticks_loaded < self.tick_band {
             let ticks_to_load =
-                std::cmp::min(TICKS_PER_BATCH as u16, INITIAL_TICKS_PER_SIDE - ticks_loaded);
+                std::cmp::min(TICKS_PER_BATCH as u16, self.tick_band - ticks_loaded);
 
             let (batch_ticks, next_tick) = self
                 .get_tick_data_batch_request(
@@ -307,9 +318,8 @@ where
         // Process only initialized ticks
         for tick_data in fetched_ticks.into_iter().filter(|t| t.initialized) {
             let tick_info = TickInfo {
-                initialized:     tick_data.initialized,
-                liquidity_gross: tick_data.liquidityGross,
-                liquidity_net:   tick_data.liquidityNet
+                initialized:   tick_data.initialized,
+                liquidity_net: tick_data.liquidityNet
             };
 
             ticks.insert(tick_data.tick.as_i32(), tick_info);

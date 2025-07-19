@@ -3,12 +3,12 @@
 
 use std::collections::HashMap;
 
-use alloy::primitives::U256;
+use alloy::primitives::{I256, U256};
 use itertools::Itertools;
 use malachite::num::conversion::traits::SaturatingInto;
 use serde::{Deserialize, Serialize};
 use uniswap_v3_math::{
-    tick_bitmap::next_initialized_tick_within_one_word,
+    tick_bitmap::{flip_tick, next_initialized_tick_within_one_word},
     tick_math::{MAX_TICK, MIN_TICK, get_tick_at_sqrt_ratio}
 };
 
@@ -44,6 +44,156 @@ impl BaselineLiquidity {
             initialized_ticks,
             tick_bitmap,
             tick_spacing
+        }
+    }
+
+    pub fn update_liquidity_from_event(
+        &mut self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: I256
+    ) {
+        let min_tick_init = self
+            .initialized_ticks
+            .keys()
+            .min()
+            .copied()
+            .expect("No min-initialized tick. This will break the update event algo.");
+
+        let max_tick_init = self
+            .initialized_ticks
+            .keys()
+            .max()
+            .copied()
+            .expect("No max-initialized tick. This will break the update event algo");
+
+        // should never overflow
+        let liquidity_delta = i128::try_from(liquidity_delta).unwrap();
+
+        // Case where we surround the current position (greater than the position on
+        // both sides);
+        if tick_lower < min_tick_init && tick_upper > max_tick_init {
+            // we don't flip any ticks here as there outside of our loaded band
+            if liquidity_delta.is_negative() {
+                self.start_liquidity -= liquidity_delta.abs() as u128;
+            } else {
+                self.start_liquidity += liquidity_delta as u128;
+            }
+
+            return
+        }
+
+        // Case were we are fully inside the range
+        if tick_lower >= min_tick_init && tick_upper <= max_tick_init {
+            // handle lower
+            let tick_info_lower = self.initialized_ticks.entry(tick_lower).or_default();
+            let start_am_lower = tick_info_lower.liquidity_net;
+            tick_info_lower.liquidity_net += liquidity_delta;
+            let end_am_lower = tick_info_lower.liquidity_net;
+            if end_am_lower == 0 {
+                self.initialized_ticks.remove(&tick_lower);
+            }
+            if start_am_lower == 0 || end_am_lower == 0 {
+                flip_tick(&mut self.tick_bitmap, tick_lower, self.tick_spacing).unwrap();
+            }
+
+            // handle upper
+            let tick_info_upper = self.initialized_ticks.entry(tick_upper).or_default();
+            let start_am_upper = tick_info_upper.liquidity_net;
+            tick_info_upper.liquidity_net -= liquidity_delta;
+            let end_am_upper = tick_info_upper.liquidity_net;
+            if end_am_upper == 0 {
+                self.initialized_ticks.remove(&tick_upper);
+            }
+            if start_am_upper == 0 || end_am_upper == 0 {
+                flip_tick(&mut self.tick_bitmap, tick_upper, self.tick_spacing).unwrap();
+            }
+
+            if self.start_tick > tick_lower && self.start_tick < tick_upper {
+                if liquidity_delta.is_negative() {
+                    self.start_liquidity -= liquidity_delta.abs() as u128;
+                } else {
+                    self.start_liquidity += liquidity_delta as u128;
+                }
+            }
+
+            return
+        }
+
+        // lower tick is in range, upper out of range
+        if tick_lower >= min_tick_init && tick_upper > max_tick_init {
+            // we are fully out of range here.
+            if tick_lower > max_tick_init {
+                return;
+            }
+
+            // update the tick
+            let tick_info = self.initialized_ticks.entry(tick_lower).or_default();
+
+            let start_am = tick_info.liquidity_net;
+
+            // Bc we are lower, we add the liq.
+            tick_info.liquidity_net += liquidity_delta;
+
+            // if we have no more liq here, we remove from the tick map
+            let end_am = tick_info.liquidity_net;
+            if end_am == 0 {
+                self.initialized_ticks.remove(&tick_lower);
+            }
+
+            // if we started un-init or we became un-init, we need to flip the tick
+            if start_am == 0 || end_am == 0 {
+                flip_tick(&mut self.tick_bitmap, tick_lower, self.tick_spacing).unwrap();
+            }
+
+            // if we are less than start tick, means that we effect slot0 and need to add.
+            if tick_lower <= self.start_tick {
+                if liquidity_delta.is_negative() {
+                    self.start_liquidity -= liquidity_delta.abs() as u128;
+                } else {
+                    self.start_liquidity += liquidity_delta as u128;
+                }
+            }
+            return
+        }
+
+        // upper tick in range,
+        if tick_lower < min_tick_init && tick_upper <= max_tick_init {
+            // we are fully out of range here.
+            if tick_upper < min_tick_init {
+                return;
+            }
+
+            // update the tick
+            let tick_info = self.initialized_ticks.entry(tick_upper).or_default();
+
+            let start_am = tick_info.liquidity_net;
+
+            // Bc we are upper, we sub the liq.
+            tick_info.liquidity_net -= liquidity_delta;
+
+            // if we have no more liq here, we remove from the tick map
+            let end_am = tick_info.liquidity_net;
+            if end_am == 0 {
+                self.initialized_ticks.remove(&tick_upper);
+            }
+
+            // if we started un-init or we became un-init, we need to flip the tick
+            if start_am == 0 || end_am == 0 {
+                flip_tick(&mut self.tick_bitmap, tick_upper, self.tick_spacing).unwrap();
+            }
+
+            // if our upper tick is ge the start tick, and lower is out of range, means that
+            // the current liq needs to be updated.
+            if tick_upper >= self.start_tick {
+                if liquidity_delta.is_negative() {
+                    self.start_liquidity -= liquidity_delta.abs() as u128;
+                } else {
+                    self.start_liquidity += liquidity_delta as u128;
+                }
+            }
+
+            return
         }
     }
 
