@@ -51,16 +51,16 @@ impl UniswapPools {
                 PoolUpdate::NewBlock(block_number) => {
                     new_block_number = block_number;
                 }
-                PoolUpdate::Reorg { from_block, to_block } => {
+                PoolUpdate::Reorg { to_block, .. } => {
                     new_block_number = to_block;
                 }
-                PoolUpdate::SwapEvent { pool_id, block, tx_index, log_index, event } => {
+                PoolUpdate::SwapEvent { pool_id, event, .. } => {
                     let mut pool = self.pools.get_mut(&pool_id).unwrap();
                     let state = pool.value_mut();
                     // update slot0 values
                     state.update_slot0(event.tick, event.sqrt_price_x96.into(), event.liquidity);
                 }
-                PoolUpdate::LiquidityEvent { pool_id, block, tx_index, log_index, event } => {
+                PoolUpdate::LiquidityEvent { pool_id, event, .. } => {
                     let mut pool = self.pools.get_mut(&pool_id).unwrap();
                     let state = pool.value_mut();
 
@@ -70,7 +70,7 @@ impl UniswapPools {
                         event.liquidity_delta
                     );
                 }
-                PoolUpdate::FeeUpdate { pool_id, block, bundle_fee, swap_fee, protocol_fee } => {
+                PoolUpdate::FeeUpdate { pool_id, bundle_fee, swap_fee, protocol_fee, .. } => {
                     let mut pool = self.pools.get_mut(&pool_id).unwrap();
                     let fees = pool.value_mut().fees_mut();
 

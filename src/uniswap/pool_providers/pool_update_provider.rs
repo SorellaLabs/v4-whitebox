@@ -126,12 +126,8 @@ impl PoolUpdate {
         };
 
         let (other_tx_index, other_log_index) = match b {
-            PoolUpdate::SwapEvent { pool_id, block, tx_index, log_index, event } => {
-                (*tx_index, *log_index)
-            }
-            PoolUpdate::LiquidityEvent { pool_id, block, tx_index, log_index, event } => {
-                (*tx_index, *log_index)
-            }
+            PoolUpdate::SwapEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
+            PoolUpdate::LiquidityEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
             _ => (u64::MAX, u64::MAX)
         };
 
