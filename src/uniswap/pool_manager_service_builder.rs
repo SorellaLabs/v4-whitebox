@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 use super::{
     baseline_pool_factory::BaselinePoolFactory,
     fetch_pool_keys::set_controller_address,
-    pool::PoolId,
     pool_data_loader::DataLoader,
     pool_key::PoolKey,
     pool_manager_service::{PoolManagerService, PoolManagerServiceError},
-    pool_registry::UniswapPoolRegistry
+    pool_registry::UniswapPoolRegistry,
+    pools::PoolId
 };
 use crate::pool_providers::PoolEventStream;
 
@@ -161,8 +161,12 @@ where
         // Create registry and factory
         let registry = UniswapPoolRegistry::default();
         let tick_range_size = self.initial_tick_range_size.unwrap_or(400);
-        let factory =
-            BaselinePoolFactory::new(self.provider.clone(), registry, self.pool_manager_address);
+        let factory = BaselinePoolFactory::new(
+            self.provider.clone(),
+            registry,
+            self.pool_manager_address,
+            self.initial_tick_range_size
+        );
 
         // Get event stream or create default
         let event_stream = self.event_stream.unwrap_or_default();

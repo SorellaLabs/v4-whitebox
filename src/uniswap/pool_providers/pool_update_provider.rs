@@ -238,95 +238,57 @@ where
         self.tracked_pools.iter().copied().collect()
     }
 
-    /// Process events for a specific block
-    async fn process_block_events(
-        &mut self,
+    /// Process a swap event log
+    fn process_swap_event(
+        &self,
+        log: &alloy::rpc::types::Log,
         block_number: u64
-    ) -> Result<Vec<PoolUpdate>, PoolUpdateError> {
-        let mut updates = Vec::new();
+    ) -> Option<PoolUpdate> {
+        if let Ok(swap_event) = IUniswapV4Pool::Swap::decode_log(&log.inner) {
+            // Double-check the pool ID (should already be filtered)
+            if self.tracked_pools.contains(&swap_event.id) {
+                let event_data = SwapEventData {
+                    sender:         swap_event.sender,
+                    amount0:        swap_event.amount0,
+                    amount1:        swap_event.amount1,
+                    sqrt_price_x96: swap_event.sqrtPriceX96,
+                    liquidity:      swap_event.liquidity,
+                    tick:           swap_event.tick.as_i32(),
+                    fee:            swap_event.fee.to()
+                };
 
-        // If no pools are tracked, return early
-        if self.tracked_pools.is_empty() {
-            return Ok(updates);
-        }
-
-        // Create filters with pool ID topics for both event types
-        let pool_topics: Vec<_> = self
-            .tracked_pools
-            .iter()
-            .map(|pool_id| pool_id.0.into())
-            .collect();
-
-        // Create filter for Swap events
-        let swap_filter = Filter::new()
-            .address(self.pool_manager)
-            .event_signature(IUniswapV4Pool::Swap::SIGNATURE_HASH)
-            .topic1(pool_topics.clone())
-            .from_block(block_number)
-            .to_block(block_number);
-
-        // Create filter for ModifyLiquidity events
-        let modify_filter = Filter::new()
-            .address(self.pool_manager)
-            .event_signature(IUniswapV4Pool::ModifyLiquidity::SIGNATURE_HASH)
-            .topic1(pool_topics)
-            .from_block(block_number)
-            .to_block(block_number);
-
-        // Get swap logs
-        let swap_logs = self
-            .provider
-            .get_logs(&swap_filter)
-            .await
-            .map_err(|e| PoolUpdateError::Provider(format!("Failed to get swap logs: {e}")))?;
-
-        // Get modify liquidity logs
-        let modify_logs =
-            self.provider.get_logs(&modify_filter).await.map_err(|e| {
-                PoolUpdateError::Provider(format!("Failed to get modify logs: {e}"))
-            })?;
-
-        // Process swap logs
-        for log in swap_logs {
-            if let Ok(swap_event) = IUniswapV4Pool::Swap::decode_log(&log.inner) {
-                // Double-check the pool ID (should already be filtered)
-                if self.tracked_pools.contains(&swap_event.id) {
-                    let event_data = SwapEventData {
-                        sender:         swap_event.sender,
-                        amount0:        swap_event.amount0,
-                        amount1:        swap_event.amount1,
-                        sqrt_price_x96: swap_event.sqrtPriceX96,
-                        liquidity:      swap_event.liquidity,
-                        tick:           swap_event.tick.as_i32(),
-                        fee:            swap_event.fee.to()
-                    };
-
-                    // Don't store swap events in history - we'll re-query slot0 on reorg
-                    updates.push(PoolUpdate::SwapEvent {
-                        pool_id:   swap_event.id,
-                        block:     block_number,
-                        tx_index:  log.transaction_index.unwrap_or(0),
-                        log_index: log.log_index.unwrap_or(0),
-                        event:     event_data
-                    });
-                }
+                return Some(PoolUpdate::SwapEvent {
+                    pool_id:   swap_event.id,
+                    block:     block_number,
+                    tx_index:  log.transaction_index.unwrap_or(0),
+                    log_index: log.log_index.unwrap_or(0),
+                    event:     event_data
+                });
             }
         }
+        None
+    }
 
-        // Process modify liquidity logs
-        for log in modify_logs {
-            if let Ok(modify_event) = IUniswapV4Pool::ModifyLiquidity::decode_log(&log.inner) {
-                // Double-check the pool ID (should already be filtered)
-                if self.tracked_pools.contains(&modify_event.id) {
-                    let event_data = ModifyLiquidityEventData {
-                        sender:          modify_event.sender,
-                        tick_lower:      modify_event.tickLower.as_i32(),
-                        tick_upper:      modify_event.tickUpper.as_i32(),
-                        liquidity_delta: modify_event.liquidityDelta,
-                        salt:            modify_event.salt.0
-                    };
+    /// Process a liquidity event log
+    fn process_liquidity_event(
+        &mut self,
+        log: &alloy::rpc::types::Log,
+        block_number: u64,
+        store_in_history: bool
+    ) -> Option<PoolUpdate> {
+        if let Ok(modify_event) = IUniswapV4Pool::ModifyLiquidity::decode_log(&log.inner) {
+            // Double-check the pool ID (should already be filtered)
+            if self.tracked_pools.contains(&modify_event.id) {
+                let event_data = ModifyLiquidityEventData {
+                    sender:          modify_event.sender,
+                    tick_lower:      modify_event.tickLower.as_i32(),
+                    tick_upper:      modify_event.tickUpper.as_i32(),
+                    liquidity_delta: modify_event.liquidityDelta,
+                    salt:            modify_event.salt.0
+                };
 
-                    // Store in history
+                // Store in history only if requested
+                if store_in_history {
                     self.add_to_history(StoredEvent {
                         block:           block_number,
                         tx_index:        log.transaction_index.unwrap_or(0),
@@ -334,34 +296,27 @@ where
                         pool_id:         modify_event.id,
                         liquidity_event: event_data.clone()
                     });
-
-                    updates.push(PoolUpdate::LiquidityEvent {
-                        pool_id:   modify_event.id,
-                        block:     block_number,
-                        tx_index:  log.transaction_index.unwrap_or(0),
-                        log_index: log.log_index.unwrap_or(0),
-                        event:     event_data
-                    });
                 }
+
+                return Some(PoolUpdate::LiquidityEvent {
+                    pool_id:   modify_event.id,
+                    block:     block_number,
+                    tx_index:  log.transaction_index.unwrap_or(0),
+                    log_index: log.log_index.unwrap_or(0),
+                    event:     event_data
+                });
             }
         }
+        None
+    }
 
-        // Query controller events
-        let controller_filter = Filter::new()
-            .address(self.controller_address)
-            .from_block(block_number)
-            .to_block(block_number);
+    /// Process controller event logs
+    fn process_controller_logs(&self, logs: Vec<alloy::rpc::types::Log>) -> Vec<PoolUpdate> {
+        let mut updates = Vec::new();
 
-        let controller_logs = self
-            .provider
-            .get_logs(&controller_filter)
-            .await
-            .map_err(|e| {
-                PoolUpdateError::Provider(format!("Failed to get controller logs: {e}"))
-            })?;
+        for log in logs {
+            let block_number = log.block_number.unwrap_or(0);
 
-        // Process controller logs
-        for log in controller_logs {
             if let Ok(event) = ControllerV1::PoolConfigured::decode_log(&log.inner) {
                 let pool_key = PoolKey {
                     currency0:   event.asset0,
@@ -404,51 +359,163 @@ where
             }
         }
 
-        // Process transactions to find batchUpdatePools calls
-        let block = self
+        updates
+    }
+
+    /// Process batch update pools from transaction
+    fn process_batch_update_pools(
+        &self,
+        tx: &alloy::consensus::TxEnvelope,
+        block_number: u64
+    ) -> Vec<PoolUpdate> {
+        let mut updates = Vec::new();
+
+        // Check if transaction is to the controller
+        if tx.to() == Some(self.controller_address) {
+            // Try to decode as batchUpdatePools call
+            if let Ok(call) = ControllerV1::batchUpdatePoolsCall::abi_decode(tx.input()) {
+                for update in call.updates {
+                    // Normalize asset order
+                    let (asset0, asset1) = if update.assetB > update.assetA {
+                        (update.assetA, update.assetB)
+                    } else {
+                        (update.assetB, update.assetA)
+                    };
+
+                    // TODO: This is incorrect - we need to look up the actual pool ID
+                    // from the asset pair. The batchUpdatePools doesn't give us the
+                    // tick spacing or original fee needed to construct the correct pool
+                    // key. We should maintain a mapping of (asset0, asset1) -> PoolId
+                    let pool_key = PoolKey {
+                        currency0:   asset0,
+                        currency1:   asset1,
+                        fee:         update.bundleFee, /* WRONG: Using bundle fee as pool
+                                                        * identifier */
+                        tickSpacing: I24::ZERO, // WRONG: We don't have tick spacing
+                        hooks:       self.angstrom_address
+                    };
+
+                    let pool_id = PoolId::from(pool_key);
+
+                    updates.push(PoolUpdate::FeeUpdate {
+                        pool_id,
+                        block: block_number,
+                        bundle_fee: update.bundleFee.to(),
+                        swap_fee: update.unlockedFee.to(),
+                        protocol_fee: update.protocolUnlockedFee.to()
+                    });
+                }
+            }
+        }
+
+        updates
+    }
+
+    /// Process events for a block range
+    async fn process_events_for_block_range(
+        &mut self,
+        from_block: u64,
+        to_block: u64,
+        store_in_history: bool
+    ) -> Result<Vec<PoolUpdate>, PoolUpdateError> {
+        let mut updates = Vec::new();
+
+        // If no pools are tracked, return early
+        if self.tracked_pools.is_empty() {
+            return Ok(updates);
+        }
+
+        // Create pool topics for filtering
+        let pool_topics: Vec<_> = self
+            .tracked_pools
+            .iter()
+            .map(|pool_id| pool_id.0.into())
+            .collect();
+
+        // Create filters for swap and liquidity events
+        let swap_filter = Filter::new()
+            .address(self.pool_manager)
+            .event_signature(IUniswapV4Pool::Swap::SIGNATURE_HASH)
+            .topic1(pool_topics.clone())
+            .from_block(from_block)
+            .to_block(to_block);
+
+        let modify_filter = Filter::new()
+            .address(self.pool_manager)
+            .event_signature(IUniswapV4Pool::ModifyLiquidity::SIGNATURE_HASH)
+            .topic1(pool_topics)
+            .from_block(from_block)
+            .to_block(to_block);
+
+        // Get logs for both event types
+        let (swap_logs, modify_logs) = futures::try_join!(
+            self.provider.get_logs(&swap_filter),
+            self.provider.get_logs(&modify_filter)
+        )
+        .map_err(|e| PoolUpdateError::Provider(format!("Failed to get logs: {e}")))?;
+
+        // Process swap logs
+        for log in swap_logs {
+            let block_number = log.block_number.unwrap_or(from_block);
+            if let Some(update) = self.process_swap_event(&log, block_number) {
+                updates.push(update);
+            }
+        }
+
+        // Process modify liquidity logs
+        for log in modify_logs {
+            let block_number = log.block_number.unwrap_or(from_block);
+            if let Some(update) = self.process_liquidity_event(&log, block_number, store_in_history)
+            {
+                updates.push(update);
+            }
+        }
+
+        // Query controller events
+        let controller_filter = Filter::new()
+            .address(self.controller_address)
+            .from_block(from_block)
+            .to_block(to_block);
+
+        let controller_logs = self
             .provider
-            .get_block(BlockId::Number(block_number.into()))
+            .get_logs(&controller_filter)
             .await
-            .map_err(|e| PoolUpdateError::Provider(format!("Failed to get block: {e}")))?
-            .ok_or_else(|| PoolUpdateError::Provider("Block not found".to_string()))?;
+            .map_err(|e| {
+                PoolUpdateError::Provider(format!("Failed to get controller logs: {e}"))
+            })?;
 
-        if let Some(transactions) = block.transactions.as_transactions() {
-            for tx in transactions {
-                // Check if transaction is to the controller
-                if tx.to() == Some(self.controller_address) {
-                    // Try to decode as batchUpdatePools call
-                    if let Ok(call) = ControllerV1::batchUpdatePoolsCall::abi_decode(tx.input()) {
-                        for update in call.updates {
-                            // Normalize asset order
-                            let (asset0, asset1) = if update.assetB > update.assetA {
-                                (update.assetA, update.assetB)
-                            } else {
-                                (update.assetB, update.assetA)
-                            };
+        // Process controller logs
+        updates.extend(self.process_controller_logs(controller_logs));
 
-                            // TODO: This is incorrect - we need to look up the actual pool ID
-                            // from the asset pair. The batchUpdatePools doesn't give us the
-                            // tick spacing or original fee needed to construct the correct pool
-                            // key. We should maintain a mapping of
-                            // (asset0, asset1) -> PoolId
-                            let pool_key = PoolKey {
-                                currency0:   asset0,
-                                currency1:   asset1,
-                                fee:         update.bundleFee, /* WRONG: Using bundle fee as
-                                                                * pool identifier */
-                                tickSpacing: I24::ZERO, // WRONG: We don't have tick spacing
-                                hooks:       self.angstrom_address
-                            };
+        // Process transactions to find batchUpdatePools calls
+        // For single blocks, get the block directly. For ranges, iterate.
+        if from_block == to_block {
+            let block = self
+                .provider
+                .get_block(BlockId::Number(from_block.into()))
+                .await
+                .map_err(|e| PoolUpdateError::Provider(format!("Failed to get block: {e}")))?
+                .ok_or_else(|| PoolUpdateError::Provider("Block not found".to_string()))?;
 
-                            let pool_id = PoolId::from(pool_key);
+            if let Some(transactions) = block.transactions.as_transactions() {
+                for tx in transactions {
+                    updates.extend(self.process_batch_update_pools(tx, from_block));
+                }
+            }
+        } else {
+            // For block ranges, iterate through each block
+            for block_num in from_block..=to_block {
+                let block = self
+                    .provider
+                    .get_block(BlockId::Number(block_num.into()))
+                    .await
+                    .map_err(|e| PoolUpdateError::Provider(format!("Failed to get block: {e}")))?;
 
-                            updates.push(PoolUpdate::FeeUpdate {
-                                pool_id,
-                                block: block_number,
-                                bundle_fee: update.bundleFee.to(),
-                                swap_fee: update.unlockedFee.to(),
-                                protocol_fee: update.protocolUnlockedFee.to()
-                            });
+                if let Some(block) = block {
+                    if let Some(transactions) = block.transactions.as_transactions() {
+                        for tx in transactions {
+                            updates.extend(self.process_batch_update_pools(tx, block_num));
                         }
                     }
                 }
@@ -456,6 +523,16 @@ where
         }
 
         Ok(updates)
+    }
+
+    /// Process events for a specific block
+    async fn process_block_events(
+        &mut self,
+        block_number: u64
+    ) -> Result<Vec<PoolUpdate>, PoolUpdateError> {
+        // Use the shared helper with store_in_history = true for single blocks
+        self.process_events_for_block_range(block_number, block_number, true)
+            .await
     }
 
     /// Add event to history, maintaining the 10-block window
@@ -506,6 +583,34 @@ where
 
     /// Backfill events for missed blocks
     async fn backfill_blocks(
+        &mut self,
+        from_block: u64,
+        to_block: u64
+    ) -> Result<Vec<PoolUpdate>, PoolUpdateError> {
+        let mut all_updates = Vec::new();
+
+        // Process blocks in chunks to avoid overwhelming the provider
+        const CHUNK_SIZE: u64 = 100;
+        let mut current = from_block;
+
+        while current <= to_block {
+            let end = (current + CHUNK_SIZE - 1).min(to_block);
+
+            // Use the shared helper with store_in_history = false for backfilling
+            let chunk_updates = self
+                .process_events_for_block_range(current, end, false)
+                .await?;
+            all_updates.extend(chunk_updates);
+
+            current = end + 1;
+        }
+
+        Ok(all_updates)
+    }
+
+    /// Original implementation replaced by shared helper
+    #[allow(dead_code)]
+    async fn backfill_blocks_old(
         &mut self,
         from_block: u64,
         to_block: u64
