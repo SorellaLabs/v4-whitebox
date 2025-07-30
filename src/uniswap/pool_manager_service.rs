@@ -81,6 +81,7 @@ where
         pool_manager_address: Address,
         deploy_block: u64,
         tick_band: Option<u16>,
+        tick_edge_threshold: Option<u16>,
         filter_pool_keys: Option<HashSet<PoolKey>>,
         auto_pool_creation: bool,
         slot0_stream: Option<S>,
@@ -104,6 +105,7 @@ where
             provider.clone(),
             pool_manager_address,
             tick_band,
+            tick_edge_threshold,
             filter_pool_keys
         )
         .await;
@@ -304,12 +306,11 @@ where
                         this.event_stream.start_tracking_pool(pool_id);
 
                         // Subscribe new pool to slot0 stream (using angstrom ID)
-                        if let Some(slot0_stream) = &mut this.slot0_stream {
-                            if let Some(angstrom_pool_id) =
+                        if let Some(slot0_stream) = &mut this.slot0_stream
+                            && let Some(angstrom_pool_id) =
                                 this.factory.registry().public_key_from_private(&pool_id)
-                            {
-                                slot0_stream.subscribe_pools(HashSet::from([angstrom_pool_id]));
-                            }
+                        {
+                            slot0_stream.subscribe_pools(HashSet::from([angstrom_pool_id]));
                         }
 
                         tracing::info!("Added new pool: {:?}", pool_id);

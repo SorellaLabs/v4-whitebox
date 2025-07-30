@@ -111,14 +111,14 @@ impl Stream for Slot0Client {
             }
         }
 
-        if let Some(cur_sub) = self.subscription.as_mut() {
-            if let Poll::Ready(update) = cur_sub.poll_next_unpin(cx) {
-                match update {
-                    Some(Ok(update)) => return Poll::Ready(Some(update)),
-                    Some(Err(_)) | None => {
-                        cx.waker().wake_by_ref();
-                        self.reconnect();
-                    }
+        if let Some(cur_sub) = self.subscription.as_mut()
+            && let Poll::Ready(update) = cur_sub.poll_next_unpin(cx)
+        {
+            match update {
+                Some(Ok(update)) => return Poll::Ready(Some(update)),
+                Some(Err(_)) | None => {
+                    cx.waker().wake_by_ref();
+                    self.reconnect();
                 }
             }
         }

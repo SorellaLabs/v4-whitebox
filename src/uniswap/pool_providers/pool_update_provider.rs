@@ -344,7 +344,7 @@ where
                     hooks:       self.angstrom_address
                 };
 
-                self.pool_registry.add_new_pool(pool_key.clone());
+                self.pool_registry.add_new_pool(pool_key);
 
                 // Get the Uniswap pool ID from registry
                 let angstrom_pool_id = PoolId::from(pool_key);
@@ -545,11 +545,11 @@ where
                     .await
                     .map_err(|e| PoolUpdateError::Provider(format!("Failed to get block: {e}")))?;
 
-                if let Some(block) = block {
-                    if let Some(transactions) = block.transactions.as_transactions() {
-                        for tx in transactions {
-                            updates.extend(self.process_batch_update_pools(tx, block_num));
-                        }
+                if let Some(block) = block
+                    && let Some(transactions) = block.transactions.as_transactions()
+                {
+                    for tx in transactions {
+                        updates.extend(self.process_batch_update_pools(tx, block_num));
                     }
                 }
             }

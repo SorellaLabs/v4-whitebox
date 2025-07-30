@@ -37,9 +37,9 @@ impl UniswapPoolRegistry {
     }
 
     pub fn add_new_pool(&mut self, mut pool_key: PoolKey) {
-        self.pools.insert(pool_key.clone().into(), pool_key.clone());
+        self.pools.insert(pool_key.into(), pool_key);
 
-        let copyed_pub: PoolId = pool_key.clone().into();
+        let copyed_pub: PoolId = pool_key.into();
         pool_key.fee = U24::from(0x800000);
         let priv_key = PoolId::from(pool_key);
         self.conversion_map.insert(copyed_pub, priv_key);

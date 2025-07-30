@@ -66,7 +66,7 @@ impl UniswapPools {
 
         let mut new_block_number = 0;
         // we sort ascending
-        updates.sort_by(|a, b| a.sort(&b));
+        updates.sort_by(|a, b| a.sort(b));
 
         for update in updates {
             match update {
@@ -89,7 +89,6 @@ impl UniswapPools {
                     let Some(mut pool) = self.pools.get_mut(&pool_id) else {
                         continue;
                     };
-
                     let state = pool.value_mut();
 
                     state.update_liquidity(

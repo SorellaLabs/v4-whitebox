@@ -28,6 +28,7 @@ where
 
     // Optional fields with defaults
     initial_tick_range_size: Option<u16>,
+    tick_edge_threshold:     Option<u16>,
     fixed_pools:             Option<HashSet<PoolKey>>,
     auto_pool_creation:      bool,
     slot0_stream:            Option<S>,
@@ -56,6 +57,7 @@ where
             deploy_block,
             event_stream,
             initial_tick_range_size: None,
+            tick_edge_threshold: None,
             fixed_pools: None,
             auto_pool_creation: true,
             slot0_stream: None,
@@ -71,6 +73,12 @@ where
     /// Set the initial tick range size for loading pool data
     pub fn with_initial_tick_range_size(mut self, size: u16) -> Self {
         self.initial_tick_range_size = Some(size);
+        self
+    }
+
+    /// Set the tick edge threshold for when to load more ticks
+    pub fn with_tick_edge_threshold(mut self, threshold: u16) -> Self {
+        self.tick_edge_threshold = Some(threshold);
         self
     }
 
@@ -105,6 +113,7 @@ where
             deploy_block:            self.deploy_block,
             event_stream:            self.event_stream,
             initial_tick_range_size: self.initial_tick_range_size,
+            tick_edge_threshold:     self.tick_edge_threshold,
             fixed_pools:             self.fixed_pools,
             auto_pool_creation:      self.auto_pool_creation,
             slot0_stream:            Some(stream),
@@ -131,6 +140,7 @@ where
             self.pool_manager_address,
             self.deploy_block,
             self.initial_tick_range_size,
+            self.tick_edge_threshold,
             self.fixed_pools,
             self.auto_pool_creation,
             self.slot0_stream,

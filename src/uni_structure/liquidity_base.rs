@@ -75,7 +75,7 @@ impl BaselineLiquidity {
         if tick_lower < min_tick_init && tick_upper > max_tick_init {
             // we don't flip any ticks here as there outside of our loaded band
             if liquidity_delta.is_negative() {
-                self.start_liquidity -= liquidity_delta.abs() as u128;
+                self.start_liquidity -= liquidity_delta.unsigned_abs();
             } else {
                 self.start_liquidity += liquidity_delta as u128;
             }
@@ -111,7 +111,7 @@ impl BaselineLiquidity {
 
             if self.start_tick > tick_lower && self.start_tick < tick_upper {
                 if liquidity_delta.is_negative() {
-                    self.start_liquidity -= liquidity_delta.abs() as u128;
+                    self.start_liquidity -= liquidity_delta.unsigned_abs();
                 } else {
                     self.start_liquidity += liquidity_delta as u128;
                 }
@@ -149,7 +149,7 @@ impl BaselineLiquidity {
             // if we are less than start tick, means that we effect slot0 and need to add.
             if tick_lower <= self.start_tick {
                 if liquidity_delta.is_negative() {
-                    self.start_liquidity -= liquidity_delta.abs() as u128;
+                    self.start_liquidity -= liquidity_delta.unsigned_abs();
                 } else {
                     self.start_liquidity += liquidity_delta as u128;
                 }
@@ -187,13 +187,11 @@ impl BaselineLiquidity {
             // the current liq needs to be updated.
             if tick_upper >= self.start_tick {
                 if liquidity_delta.is_negative() {
-                    self.start_liquidity -= liquidity_delta.abs() as u128;
+                    self.start_liquidity -= liquidity_delta.unsigned_abs();
                 } else {
                     self.start_liquidity += liquidity_delta as u128;
                 }
             }
-
-            return
         }
     }
 

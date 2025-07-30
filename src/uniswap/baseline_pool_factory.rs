@@ -44,10 +44,11 @@ pub enum UpdateMessage {
 
 /// Factory for creating BaselinePoolState instances with full tick loading
 pub struct BaselinePoolFactory<P> {
-    provider:       Arc<P>,
-    registry:       UniswapPoolRegistry,
-    pool_manager:   Address,
-    tick_band:      u16,
+    provider:            Arc<P>,
+    registry:            UniswapPoolRegistry,
+    pool_manager:        Address,
+    tick_band:           u16,
+    tick_edge_threshold: u16,
     tick_loading: FuturesUnordered<
         BoxFuture<'static, (PoolId, HashMap<i32, TickInfo>, HashMap<i16, alloy::primitives::U256>)>
     >,
@@ -67,6 +68,7 @@ where
         provider: Arc<P>,
         pool_manager: Address,
         tick_band: Option<u16>,
+        tick_edge_threshold: Option<u16>,
         filter_pool_keys: Option<HashSet<PoolKey>>
     ) -> (Self, Arc<DashMap<PoolId, BaselinePoolState>>) {
         // Fetch all existing pool keys to get their fees
@@ -89,6 +91,7 @@ where
             registry,
             pool_manager,
             tick_band: tick_band.unwrap_or(INITIAL_TICKS_PER_SIDE),
+            tick_edge_threshold: tick_edge_threshold.unwrap_or(100),
             tick_loading: FuturesUnordered::default(),
             pool_generator: FuturesUnordered::default()
         };
@@ -102,7 +105,7 @@ where
             // If no filter provided or pool is in filter, create it
             if filter_pool_ids
                 .as_ref()
-                .map_or(true, |filter| filter.contains(&angstrom_pool_id))
+                .is_none_or(|filter| filter.contains(&angstrom_pool_id))
             {
                 // Use the factory to create and initialize the pool
                 let baseline_state = this
@@ -818,7 +821,7 @@ where
         };
 
         // Calculate the distance threshold
-        let threshold = (tick_spacing * self.tick_band as i32).abs();
+        let threshold = (tick_spacing * self.tick_edge_threshold as i32).abs();
 
         let mut requested = false;
 
@@ -831,17 +834,18 @@ where
                 true, // zero_for_one = true means loading ticks below
                 start_tick,
                 tick_spacing,
-                self.tick_band,
+                self.tick_edge_threshold,
                 block_number
             );
             requested = true;
             tracing::info!(
                 "Requesting more ticks below for pool {:?}, current_tick: {}, min_tick: {}, \
-                 threshold: {}",
+                 threshold: {}, loading {} ticks",
                 pool_id,
                 current_tick,
                 min_tick,
-                threshold
+                threshold,
+                self.tick_edge_threshold
             );
         }
 
@@ -854,17 +858,18 @@ where
                 false, // zero_for_one = false means loading ticks above
                 start_tick,
                 tick_spacing,
-                self.tick_band,
+                self.tick_edge_threshold,
                 block_number
             );
             requested = true;
             tracing::info!(
                 "Requesting more ticks above for pool {:?}, current_tick: {}, max_tick: {}, \
-                 threshold: {}",
+                 threshold: {}, loading {} ticks",
                 pool_id,
                 current_tick,
                 max_tick,
-                threshold
+                threshold,
+                self.tick_edge_threshold
             );
         }
 
