@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc
+};
 
 use alloy::{
     primitives::{
@@ -8,11 +11,7 @@ use alloy::{
     providers::Provider
 };
 use dashmap::DashMap;
-use futures::{
-    Stream, StreamExt,
-    future::{BoxFuture, join_all},
-    stream::FuturesUnordered
-};
+use futures::{Stream, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use thiserror::Error;
 
 use super::{
@@ -20,13 +19,13 @@ use super::{
     pools::PoolId
 };
 use crate::{
-    fetch_pool_keys::{PoolKeyWithFees, fetch_angstrom_pools},
+    fetch_pool_keys::fetch_angstrom_pools,
     uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo},
     uniswap::{pool_key::PoolKey, pool_registry::UniswapPoolRegistry}
 };
 
-pub const INITIAL_TICKS_PER_SIDE: u16 = 400;
-const TICKS_PER_BATCH: usize = 25;
+pub const INITIAL_TICKS_PER_SIDE: u16 = 300;
+const TICKS_PER_BATCH: usize = 10;
 
 #[derive(Error, Debug)]
 pub enum BaselinePoolFactoryError {
@@ -66,18 +65,24 @@ where
         current_block: u64,
         angstrom_addr: Address,
         provider: Arc<P>,
-        registry: UniswapPoolRegistry,
         pool_manager: Address,
-        tick_band: Option<u16>
+        tick_band: Option<u16>,
+        filter_pool_keys: Option<HashSet<PoolKey>>
     ) -> (Self, Arc<DashMap<PoolId, BaselinePoolState>>) {
-        // Fetch all existing pool keys
-        let pool_keys_with_fees = fetch_angstrom_pools(
+        // Fetch all existing pool keys to get their fees
+        let all_pool_keys_with_fees = fetch_angstrom_pools(
             deploy_block as usize,
             current_block as usize,
             angstrom_addr,
             provider.as_ref()
         )
         .await;
+
+        // Create filter set if provided
+        let filter_pool_ids: Option<HashSet<PoolId>> =
+            filter_pool_keys.map(|keys| keys.into_iter().map(PoolId::from).collect());
+
+        let registry = UniswapPoolRegistry::default();
 
         let mut this = Self {
             provider,
@@ -90,25 +95,41 @@ where
 
         let pools = DashMap::new();
 
-        for pool_key_with_fees in pool_keys_with_fees {
-            let pool_id = PoolId::from(pool_key_with_fees.pool_key);
+        // Create pools - either all or filtered based on filter_pool_ids
+        for pool_key_with_fees in all_pool_keys_with_fees {
+            let angstrom_pool_id = PoolId::from(pool_key_with_fees.pool_key);
 
-            // Use the factory to create and initialize the pool
-            let baseline_state = this
-                .create_new_baseline_angstrom_pool(
-                    pool_key_with_fees.pool_key,
-                    current_block,
-                    pool_key_with_fees.bundle_fee,
-                    pool_key_with_fees.swap_fee,
-                    pool_key_with_fees.protocol_fee
-                )
-                .await
-                .unwrap();
+            // If no filter provided or pool is in filter, create it
+            if filter_pool_ids
+                .as_ref()
+                .map_or(true, |filter| filter.contains(&angstrom_pool_id))
+            {
+                // Use the factory to create and initialize the pool
+                let baseline_state = this
+                    .create_new_baseline_angstrom_pool(
+                        pool_key_with_fees.pool_key,
+                        current_block,
+                        pool_key_with_fees.bundle_fee,
+                        pool_key_with_fees.swap_fee,
+                        pool_key_with_fees.protocol_fee
+                    )
+                    .await
+                    .unwrap();
 
-            pools.insert(pool_id, baseline_state);
+                // Get the Uniswap pool ID from registry
+                let uniswap_pool_id = this
+                    .registry
+                    .private_key_from_public(&angstrom_pool_id)
+                    .expect("Pool should have been registered");
+                pools.insert(uniswap_pool_id, baseline_state);
+            }
         }
 
         (this, Arc::new(pools))
+    }
+
+    pub fn is_processing(&self) -> bool {
+        !(self.tick_loading.is_empty() || !self.pool_generator.is_empty())
     }
 
     pub fn registry(&self) -> UniswapPoolRegistry {
@@ -117,32 +138,6 @@ where
 
     pub fn get_uniswap_pool_ids(&self) -> impl Iterator<Item = PoolId> + '_ {
         self.registry.private_keys()
-    }
-
-    /// Creates a BaselinePoolState with full tick loading from existing pools
-    /// in registry
-    pub async fn init_baseline_pools(&self, block: u64) -> Vec<BaselinePoolState> {
-        let pool_ids: Vec<_> = self.registry.pools().keys().copied().collect();
-        let mut futures = Vec::new();
-
-        for pool_id in pool_ids {
-            let internal = self
-                .registry
-                .conversion_map
-                .get(&pool_id)
-                .expect("factory conversion map failure");
-
-            // TODO: Get actual fees from somewhere - using defaults for now
-            let future =
-                self.create_baseline_pool_from_registry(*internal, pool_id, block, 0, 0, 0);
-            futures.push(future);
-        }
-
-        let results = join_all(futures).await;
-        results
-            .into_iter()
-            .map(|result| result.expect("failed to init baseline pool"))
-            .collect()
     }
 
     /// Creates a new BaselinePoolState with full tick loading for Angstrom
@@ -163,6 +158,9 @@ where
         pool_key.fee = U24::from(0x800000);
         let priv_key = PoolId::from(pool_key);
         self.registry.conversion_map.insert(pub_key, priv_key);
+        self.registry
+            .reverse_conversion_map
+            .insert(priv_key, pub_key);
 
         let internal = self
             .registry
@@ -215,7 +213,6 @@ where
         let sqrt_price_x96 = pool_data.sqrtPrice.into();
         let tick = pool_data.tick.as_i32();
         let tick_spacing = pool_data.tickSpacing.as_i32();
-        let book_fee = pool_data.fee.to::<u32>();
 
         // Load ticks in both directions
         let (ticks, tick_bitmap) = self
@@ -589,6 +586,14 @@ where
         &self.registry.conversion_map
     }
 
+    pub fn remove_pool_by_id(&mut self, pool_id: PoolId) {
+        let _ = self.registry.pools.remove(&pool_id);
+        self.registry
+            .conversion_map
+            .remove(&pool_id)
+            .expect("failed to remove pool id in factory");
+    }
+
     /// Remove pool from registry
     pub fn remove_pool(&mut self, pool_key: PoolKey) -> PoolId {
         let id = PoolId::from(pool_key);
@@ -626,29 +631,48 @@ where
             let data_loader =
                 DataLoader::new_with_registry(internal_pool_id, pool_id, registry, pool_manager);
 
-            let tick_start = if zero_for_one {
+            let initial_tick_start = if zero_for_one {
                 current_tick - tick_spacing
             } else {
                 current_tick + tick_spacing
             };
 
-            let (ticks, _) = data_loader
-                .load_tick_data(
-                    I24::unchecked_from(tick_start),
-                    zero_for_one,
-                    num_ticks,
-                    I24::unchecked_from(tick_spacing),
-                    block_number,
-                    provider
-                )
-                .await
-                .expect("Failed to load tick data");
+            // Batch load ticks
+            let mut fetched_ticks = Vec::new();
+            let mut tick_start = initial_tick_start;
+            let mut ticks_loaded = 0u16;
+
+            while ticks_loaded < num_ticks {
+                let ticks_to_load = std::cmp::min(TICKS_PER_BATCH as u16, num_ticks - ticks_loaded);
+
+                let (batch_ticks, _) = data_loader
+                    .load_tick_data(
+                        I24::unchecked_from(tick_start),
+                        zero_for_one,
+                        ticks_to_load,
+                        I24::unchecked_from(tick_spacing),
+                        block_number,
+                        provider.clone()
+                    )
+                    .await
+                    .expect("Failed to load tick data");
+
+                fetched_ticks.extend(batch_ticks);
+                ticks_loaded += ticks_to_load;
+
+                // Update tick_start for next batch
+                tick_start = if zero_for_one {
+                    tick_start - (ticks_to_load as i32 * tick_spacing)
+                } else {
+                    tick_start + (ticks_to_load as i32 * tick_spacing)
+                };
+            }
 
             // Process ticks into HashMap
             let mut tick_map = HashMap::new();
             let mut tick_bitmap = HashMap::new();
 
-            for tick_data in ticks.into_iter().filter(|t| t.initialized) {
+            for tick_data in fetched_ticks.into_iter().filter(|t| t.initialized) {
                 let tick_info = TickInfo {
                     initialized:   tick_data.initialized,
                     liquidity_net: tick_data.liquidityNet
@@ -694,6 +718,9 @@ where
         priv_pool_key.fee = U24::from(0x800000);
         let priv_key = PoolId::from(priv_pool_key);
         self.registry.conversion_map.insert(pub_key, priv_key);
+        self.registry
+            .reverse_conversion_map
+            .insert(priv_key, pub_key);
 
         let internal_pool_id = priv_key;
         let pool_id = pub_key;
@@ -724,7 +751,6 @@ where
             let sqrt_price_x96 = pool_data.sqrtPrice.into();
             let tick = pool_data.tick.as_i32();
             let tick_spacing = pool_data.tickSpacing.as_i32();
-            let book_fee = pool_data.fee.to::<u32>();
 
             // Load ticks in both directions
             let (ticks, tick_bitmap) = Self::load_tick_data_in_band_static(
@@ -751,9 +777,9 @@ where
             let fee_config =
                 crate::uni_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
 
-            // Create and return BaselinePoolState with pool_id
+            // Create and return BaselinePoolState with Uniswap pool_id
             Ok((
-                pool_id,
+                internal_pool_id, // Use Uniswap pool ID
                 BaselinePoolState::new(
                     baseline_liquidity,
                     block,
@@ -767,6 +793,82 @@ where
         };
 
         self.pool_generator.push(Box::pin(future));
+    }
+
+    /// Check if a pool needs more ticks loaded and request them if needed
+    pub fn check_and_request_ticks_if_needed(
+        &mut self,
+        pool_id: PoolId,
+        pool_state: &BaselinePoolState,
+        block_number: Option<u64>
+    ) -> bool {
+        let baseline = pool_state.get_baseline_liquidity();
+
+        let current_tick = baseline.get_current_tick();
+        let tick_spacing = baseline.get_tick_spacing();
+
+        // Get min and max initialized ticks
+        let Some(min_tick) = baseline.get_min_initialized_tick() else {
+            // No ticks loaded, shouldn't happen
+            return false;
+        };
+        let Some(max_tick) = baseline.get_max_initialized_tick() else {
+            // No ticks loaded, shouldn't happen
+            return false;
+        };
+
+        // Calculate the distance threshold
+        let threshold = (tick_spacing * self.tick_band as i32).abs();
+
+        let mut requested = false;
+
+        // Check if we need more ticks below current price
+        if current_tick - min_tick < threshold {
+            // Load more ticks below
+            let start_tick = min_tick - tick_spacing;
+            self.request_more_ticks(
+                pool_id,
+                true, // zero_for_one = true means loading ticks below
+                start_tick,
+                tick_spacing,
+                self.tick_band,
+                block_number
+            );
+            requested = true;
+            tracing::info!(
+                "Requesting more ticks below for pool {:?}, current_tick: {}, min_tick: {}, \
+                 threshold: {}",
+                pool_id,
+                current_tick,
+                min_tick,
+                threshold
+            );
+        }
+
+        // Check if we need more ticks above current price
+        if max_tick - current_tick < threshold {
+            // Load more ticks above
+            let start_tick = max_tick + tick_spacing;
+            self.request_more_ticks(
+                pool_id,
+                false, // zero_for_one = false means loading ticks above
+                start_tick,
+                tick_spacing,
+                self.tick_band,
+                block_number
+            );
+            requested = true;
+            tracing::info!(
+                "Requesting more ticks above for pool {:?}, current_tick: {}, max_tick: {}, \
+                 threshold: {}",
+                pool_id,
+                current_tick,
+                max_tick,
+                threshold
+            );
+        }
+
+        requested
     }
 }
 

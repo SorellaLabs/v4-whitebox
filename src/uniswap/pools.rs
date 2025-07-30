@@ -60,7 +60,12 @@ impl UniswapPools {
     }
 
     pub(crate) fn update_pools(&self, mut updates: Vec<PoolUpdate>) {
+        if updates.is_empty() {
+            return
+        }
+
         let mut new_block_number = 0;
+        println!("{:#?}", updates);
 
         // we sort ascending
         updates.sort_by(|a, b| a.sort(&b));
@@ -116,6 +121,8 @@ impl UniswapPools {
                 _ => {}
             }
         }
+
+        println!("processed block: {}", new_block_number);
 
         assert!(
             new_block_number != 0,

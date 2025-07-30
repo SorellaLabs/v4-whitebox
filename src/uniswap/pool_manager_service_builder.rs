@@ -1,38 +1,20 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
-use alloy::{
-    primitives::{Address, U160},
-    providers::Provider
-};
+use alloy::{primitives::Address, providers::Provider};
 use futures::Stream;
-use serde::{Deserialize, Serialize};
 
 use super::{
-    baseline_pool_factory::BaselinePoolFactory,
-    fetch_pool_keys::set_controller_address,
     pool_data_loader::DataLoader,
     pool_key::PoolKey,
     pool_manager_service::{PoolManagerService, PoolManagerServiceError},
     pool_registry::UniswapPoolRegistry,
-    pools::PoolId
+    pools::PoolId,
+    slot0::Slot0Stream
 };
-use crate::{pool_providers::PoolEventStream, pools::UniswapPools};
-
-/// Update for slot0 data of a pool
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct Slot0Update {
-    /// there will be 120 updates per block or per 100ms
-    pub seq_id:         u16,
-    /// in case of block lag on node
-    pub current_block:  u64,
-    /// basic identifier
-    pub pool_id:        PoolId,
-    pub sqrt_price_x96: U160,
-    pub tick:           i32
-}
+use crate::pool_providers::PoolEventStream;
 
 /// Builder for creating a configured PoolManagerService
-pub struct PoolManagerServiceBuilder<P, Event, S>
+pub struct PoolManagerServiceBuilder<P, Event, S = NoOpSlot0Stream>
 where
     P: Provider + Clone + 'static
 {
@@ -42,27 +24,29 @@ where
     controller_address:   Address,
     pool_manager_address: Address,
     deploy_block:         u64,
+    event_stream:         Event,
 
     // Optional fields with defaults
-    is_bundle_mode:          bool,
-    event_stream:            Option<Event>,
     initial_tick_range_size: Option<u16>,
-    fixed_pools:             Option<Vec<PoolKey>>,
+    fixed_pools:             Option<HashSet<PoolKey>>,
     auto_pool_creation:      bool,
-    slot0_stream:            Option<S>
+    slot0_stream:            Option<S>,
+    current_block:           Option<u64>
 }
 
-impl<P> PoolManagerServiceBuilder<P, (), ()>
+impl<P, Event, Slot0> PoolManagerServiceBuilder<P, Event, Slot0>
 where
-    P: Provider + Clone + 'static
+    P: Provider + Clone + 'static,
+    Event: PoolEventStream
 {
-    /// Create a new builder with required parameters
+    /// Create a new builder with required parameters including event stream
     pub fn new(
         provider: Arc<P>,
         angstrom_address: Address,
         controller_address: Address,
         pool_manager_address: Address,
-        deploy_block: u64
+        deploy_block: u64,
+        event_stream: Event
     ) -> Self {
         Self {
             provider,
@@ -70,40 +54,20 @@ where
             controller_address,
             pool_manager_address,
             deploy_block,
-            is_bundle_mode: false,
-            event_stream: None,
+            event_stream,
             initial_tick_range_size: None,
             fixed_pools: None,
             auto_pool_creation: true,
-            slot0_stream: None
+            slot0_stream: None,
+            current_block: None
         }
     }
 }
 
 impl<P, Event, S> PoolManagerServiceBuilder<P, Event, S>
 where
-    P: Provider + Clone + 'static
+    P: Provider + Clone + 'static + Unpin
 {
-    /// Set the event stream for pool updates
-    pub fn with_event_stream<NewEvent: PoolEventStream>(
-        self,
-        event_stream: NewEvent
-    ) -> PoolManagerServiceBuilder<P, NewEvent, S> {
-        PoolManagerServiceBuilder {
-            provider:                self.provider,
-            angstrom_address:        self.angstrom_address,
-            controller_address:      self.controller_address,
-            pool_manager_address:    self.pool_manager_address,
-            deploy_block:            self.deploy_block,
-            is_bundle_mode:          self.is_bundle_mode,
-            event_stream:            Some(event_stream),
-            initial_tick_range_size: self.initial_tick_range_size,
-            fixed_pools:             self.fixed_pools,
-            auto_pool_creation:      self.auto_pool_creation,
-            slot0_stream:            self.slot0_stream
-        }
-    }
-
     /// Set the initial tick range size for loading pool data
     pub fn with_initial_tick_range_size(mut self, size: u16) -> Self {
         self.initial_tick_range_size = Some(size);
@@ -112,7 +76,7 @@ where
 
     /// Set a fixed set of pools to load (disables auto-discovery)
     pub fn with_fixed_pools(mut self, pools: Vec<PoolKey>) -> Self {
-        self.fixed_pools = Some(pools);
+        self.fixed_pools = Some(pools.into_iter().collect());
         self
     }
 
@@ -122,8 +86,14 @@ where
         self
     }
 
+    /// Set the current block to load pools at
+    pub fn with_current_block(mut self, block: u64) -> Self {
+        self.current_block = Some(block);
+        self
+    }
+
     /// Set the slot0 update stream
-    pub fn with_slot0_stream<NewS: Stream<Item = Slot0Update> + Send + 'static>(
+    pub fn with_slot0_stream<NewS: Slot0Stream + 'static>(
         self,
         stream: NewS
     ) -> PoolManagerServiceBuilder<P, Event, NewS> {
@@ -133,101 +103,67 @@ where
             controller_address:      self.controller_address,
             pool_manager_address:    self.pool_manager_address,
             deploy_block:            self.deploy_block,
-            is_bundle_mode:          self.is_bundle_mode,
             event_stream:            self.event_stream,
             initial_tick_range_size: self.initial_tick_range_size,
             fixed_pools:             self.fixed_pools,
             auto_pool_creation:      self.auto_pool_creation,
-            slot0_stream:            Some(stream)
+            slot0_stream:            Some(stream),
+            current_block:           self.current_block
         }
-    }
-
-    /// Set bundle mode
-    pub fn with_bundle_mode(mut self, enabled: bool) -> Self {
-        self.is_bundle_mode = enabled;
-        self
     }
 
     /// Build the PoolManagerService with the configured options
     pub async fn build(self) -> Result<PoolManagerService<P, Event, S>, PoolManagerServiceError>
     where
-        Event: PoolEventStream + Default,
-        S: Stream<Item = Slot0Update> + Send + 'static,
+        Event: PoolEventStream,
+        S: Slot0Stream + 'static,
         DataLoader: super::pool_data_loader::PoolDataLoader
     {
-        // Set the controller address for the fetch_pool_keys module
-        set_controller_address(self.controller_address);
+        // Use the required event stream
+        let event_stream = self.event_stream;
 
-        // Get current block number
-        let current_block = self.provider.get_block_number().await.unwrap();
-
-        // Create registry and factory
-        let registry = UniswapPoolRegistry::default();
-        let tick_range_size = self.initial_tick_range_size.unwrap_or(400);
-        let (factory, pools) = BaselinePoolFactory::new(
-            self.deploy_block,
-            current_block,
-            self.angstrom_address,
+        // Create service using the consolidated new method
+        let service = PoolManagerService::new(
             self.provider.clone(),
-            registry,
-            self.pool_manager_address,
-            Some(tick_range_size)
-        )
-        .await;
-
-        // Get event stream or create default
-        let event_stream = self.event_stream.unwrap_or_default();
-
-        // Create service
-        let mut service = PoolManagerService {
-            factory,
             event_stream,
-            provider: self.provider.clone(),
-            angstrom_address: self.angstrom_address,
-            controller_address: self.controller_address,
-            deploy_block: self.deploy_block,
-            pools: UniswapPools::new(pools, current_block),
-            current_block: self.deploy_block,
-            is_bundle_mode: self.is_bundle_mode,
-            auto_pool_creation: self.auto_pool_creation,
-            slot0_stream: self.slot0_stream,
-            initial_tick_range_size: tick_range_size
-        };
-
-        // Initialize with either fixed pools or discovered pools
-        if let Some(fixed_pools) = self.fixed_pools {
-            // TODO: Implement initialize_with_fixed_pools
-            // service.initialize_with_fixed_pools(fixed_pools).await?;
-        } else {
-            // TODO: Implement initialize
-            // service.initialize().await?;
-        }
-
-        // Register pools with event stream
-        for pool_id in service.factory.get_uniswap_pool_ids() {
-            service.event_stream.start_tracking_pool(pool_id);
-        }
+            self.angstrom_address,
+            self.controller_address,
+            self.pool_manager_address,
+            self.deploy_block,
+            self.initial_tick_range_size,
+            self.fixed_pools,
+            self.auto_pool_creation,
+            self.slot0_stream,
+            self.current_block
+        )
+        .await?;
 
         Ok(service)
     }
 }
 
-// Helper impl for builders without event stream
-impl<P> PoolManagerServiceBuilder<P, (), ()>
+// Helper method for creating a builder with no-op streams
+impl<P> PoolManagerServiceBuilder<P, NoOpEventStream, NoOpSlot0Stream>
 where
-    P: Provider + Clone + 'static
+    P: Provider + Clone + 'static + Unpin
 {
-    /// Build without an event stream (creates a no-op stream)
-    pub async fn build_without_event_stream(
-        self
-    ) -> Result<PoolManagerService<P, NoOpEventStream, NoOpSlot0Stream>, PoolManagerServiceError>
-    where
-        DataLoader: super::pool_data_loader::PoolDataLoader
-    {
-        let builder = self
-            .with_event_stream(NoOpEventStream)
-            .with_slot0_stream(NoOpSlot0Stream);
-        builder.build().await
+    /// Create a new builder with no-op event stream and slot0 stream
+    pub fn new_with_noop_stream(
+        provider: Arc<P>,
+        angstrom_address: Address,
+        controller_address: Address,
+        pool_manager_address: Address,
+        deploy_block: u64
+    ) -> Self {
+        let builder = PoolManagerServiceBuilder::<P, NoOpEventStream, NoOpSlot0Stream>::new(
+            provider,
+            angstrom_address,
+            controller_address,
+            pool_manager_address,
+            deploy_block,
+            NoOpEventStream
+        );
+        builder.with_slot0_stream(NoOpSlot0Stream::default())
     }
 }
 
@@ -259,16 +195,5 @@ impl Stream for NoOpEventStream {
     }
 }
 
-/// A no-op slot0 stream implementation for when no slot0 stream is needed
-pub struct NoOpSlot0Stream;
-
-impl Stream for NoOpSlot0Stream {
-    type Item = Slot0Update;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>
-    ) -> std::task::Poll<Option<Self::Item>> {
-        std::task::Poll::Pending
-    }
-}
+/// Re-export NoOpSlot0Stream from slot0 module
+pub use super::slot0::NoOpSlot0Stream;

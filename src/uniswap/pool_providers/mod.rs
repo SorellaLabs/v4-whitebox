@@ -1,7 +1,3 @@
-use std::{ops::RangeInclusive, sync::Arc};
-
-use alloy::{providers::Provider, rpc::types::eth::Filter};
-use alloy_primitives::Log;
 use futures::Stream;
 
 use crate::{

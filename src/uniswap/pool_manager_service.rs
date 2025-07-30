@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll}
@@ -11,16 +11,18 @@ use thiserror::Error;
 
 use super::{
     baseline_pool_factory::{BaselinePoolFactory, BaselinePoolFactoryError, UpdateMessage},
-    fetch_pool_keys::{PoolKeyWithFees, fetch_angstrom_pools, set_controller_address},
-    pool_data_loader::DataLoader,
+    fetch_pool_keys::set_controller_address,
     pool_key::PoolKey,
     pools::PoolId
 };
 use crate::{
     pool_providers::PoolEventStream,
     pools::UniswapPools,
-    uni_structure::{BaselinePoolState, FeeConfiguration},
-    uniswap::pool_providers::pool_update_provider::PoolUpdate
+    uni_structure::BaselinePoolState,
+    uniswap::{
+        pool_providers::pool_update_provider::PoolUpdate,
+        slot0::{Slot0Stream, Slot0Update}
+    }
 };
 
 /// Pool information combining BaselinePoolState with token metadata
@@ -52,28 +54,25 @@ where
     P: Provider + Unpin + Clone + 'static,
     Event: PoolEventStream
 {
-    pub(crate) factory:                 BaselinePoolFactory<P>,
-    pub(crate) event_stream:            Event,
-    pub(crate) provider:                Arc<P>,
-    pub(crate) angstrom_address:        Address,
-    pub(crate) controller_address:      Address,
-    pub(crate) deploy_block:            u64,
-    pub(crate) pools:                   UniswapPools,
-    pub(crate) current_block:           u64,
-    pub(crate) is_bundle_mode:          bool,
-    pub(crate) auto_pool_creation:      bool,
-    pub(crate) slot0_stream:            Option<S>,
-    pub(crate) initial_tick_range_size: u16
+    pub(crate) factory:            BaselinePoolFactory<P>,
+    pub(crate) event_stream:       Event,
+    pub(crate) pools:              UniswapPools,
+    pub(crate) current_block:      u64,
+    pub(crate) auto_pool_creation: bool,
+    pub(crate) slot0_stream:       Option<S>,
+    // If we are loading more ticks at a block, we will queue up updates messages here
+    // so that we don't hit any race conditions.
+    pending_updates:               Vec<PoolUpdate>
 }
 
 impl<P, Event, S> PoolManagerService<P, Event, S>
 where
-    S: Unpin,
-    P: Provider + Unpin + Clone + 'static,
-    DataLoader: super::pool_data_loader::PoolDataLoader,
-    Event: PoolEventStream
+    P: Provider + Clone + Unpin + 'static,
+    Event: PoolEventStream,
+    BaselinePoolFactory<P>: Stream<Item = UpdateMessage> + Unpin,
+    S: Slot0Stream
 {
-    /// Create a new PoolManagerService and initialize it with existing pools
+    /// Create a new PoolManagerService
     pub async fn new(
         provider: Arc<P>,
         event_stream: Event,
@@ -81,40 +80,42 @@ where
         controller_address: Address,
         pool_manager_address: Address,
         deploy_block: u64,
-        is_bundle_mode: bool,
-        tick_band: Option<u16>
+        tick_band: Option<u16>,
+        filter_pool_keys: Option<HashSet<PoolKey>>,
+        auto_pool_creation: bool,
+        slot0_stream: Option<S>,
+        current_block: Option<u64>
     ) -> Result<Self, PoolManagerServiceError> {
         // Set the controller address for the fetch_pool_keys module
         set_controller_address(controller_address);
-        let current_block = provider.get_block_number().await.unwrap();
 
-        // Create an empty registry for the factory - we'll populate it during
-        // initialization
-        let registry = super::pool_registry::UniswapPoolRegistry::default();
+        // Use provided current_block or get current block
+        let current_block = if let Some(block) = current_block {
+            block
+        } else {
+            provider.get_block_number().await.unwrap()
+        };
+
+        // Create factory with optional filtering
         let (factory, pools) = BaselinePoolFactory::new(
             deploy_block,
             current_block,
             angstrom_address,
             provider.clone(),
-            registry,
             pool_manager_address,
-            tick_band
+            tick_band,
+            filter_pool_keys
         )
         .await;
 
         let mut service = Self {
             event_stream,
             factory,
-            provider,
-            angstrom_address,
-            controller_address,
-            deploy_block,
             pools: UniswapPools::new(pools, current_block),
             current_block: deploy_block,
-            is_bundle_mode,
-            auto_pool_creation: true,
-            slot0_stream: None,
-            initial_tick_range_size: 400
+            auto_pool_creation,
+            slot0_stream,
+            pending_updates: Vec::new()
         };
 
         service
@@ -124,6 +125,13 @@ where
         // Ensure to register the pool_ids with the state stream.
         for pool_id in service.factory.get_uniswap_pool_ids() {
             service.event_stream.start_tracking_pool(pool_id);
+        }
+
+        // Subscribe all initial pools to slot0 stream if present (using angstrom IDs)
+        if let Some(slot0_stream) = &mut service.slot0_stream {
+            let angstrom_pool_ids: HashSet<PoolId> =
+                service.factory.registry().public_keys().collect();
+            slot0_stream.subscribe_pools(angstrom_pool_ids);
         }
 
         Ok(service)
@@ -162,81 +170,30 @@ where
         );
     }
 
-    /// Handle a new block by updating pool keys and creating new pools as
-    /// needed
-    pub async fn handle_new_block(
-        &mut self,
-        block_number: u64
-    ) -> Result<(), PoolManagerServiceError> {
-        if block_number <= self.current_block {
-            // Skip old blocks
-            return Ok(());
-        }
-
-        tracing::debug!("Processing block {}", block_number);
-
-        // Fetch updated pool keys from the last processed block to current block
-        let updated_pool_keys_with_fees = fetch_angstrom_pools(
-            self.current_block as usize + 1,
-            block_number as usize,
-            self.angstrom_address,
-            self.provider.as_ref()
-        )
-        .await;
-
-        if !updated_pool_keys_with_fees.is_empty() {
-            tracing::info!(
-                "Found {} pool updates in block {}",
-                updated_pool_keys_with_fees.len(),
-                block_number
+    pub fn slot0_update(&self, update: Slot0Update) {
+        if let Some(mut pool) = self.get_pools().get_mut(&update.angstrom_pool_id) {
+            pool.value_mut().update_slot0(
+                update.tick,
+                update.sqrt_price_x96.into(),
+                update.liquidity
             );
-
-            // Process pool changes
-            for pool_key_with_fees in updated_pool_keys_with_fees {
-                let pool_id = PoolId::from(pool_key_with_fees.pool_key);
-
-                // Check if this is a new pool and auto_pool_creation is enabled
-                if !self.pools.contains_key(&pool_id) && self.auto_pool_creation {
-                    self.handle_new_pool(
-                        pool_key_with_fees.pool_key,
-                        block_number,
-                        pool_key_with_fees.bundle_fee,
-                        pool_key_with_fees.swap_fee,
-                        pool_key_with_fees.protocol_fee
-                    );
-                } else if !(self.auto_pool_creation || self.pools.contains_key(&pool_id)) {
-                    tracing::debug!(
-                        "Skipping new pool {:?} - auto pool creation disabled",
-                        pool_id
-                    );
-                }
-            }
         }
-
-        self.current_block = block_number;
-        Ok(())
     }
 
     /// Process a pool update event from the PoolUpdateProvider
-    pub fn process_pool_update(
-        &mut self,
-        update: PoolUpdate
-    ) -> Result<(), PoolManagerServiceError> {
-        match update {
+    pub fn process_pool_update(&mut self, update: PoolUpdate) {
+        match &update {
             PoolUpdate::NewBlock(block_number) => {
-                self.current_block = block_number;
+                self.current_block = *block_number;
             }
             PoolUpdate::SwapEvent { pool_id, event, .. } => {
-                // TODO: Apply swap event to pool state
-                // This should update the pool's current price, tick, and liquidity
                 tracing::debug!("Swap event for pool {:?}: {:?}", pool_id, event);
             }
             PoolUpdate::LiquidityEvent { pool_id, event, .. } => {
-                // TODO: Apply liquidity event to pool state
-                // This should modify the pool's liquidity at the specified tick range
                 tracing::debug!("Liquidity event for pool {:?}: {:?}", pool_id, event);
             }
             PoolUpdate::PoolConfigured {
+                pool_key,
                 pool_id,
                 bundle_fee,
                 swap_fee,
@@ -245,10 +202,8 @@ where
                 block,
                 ..
             } => {
-                // Get the pool key from registry
-                if let Some(pool_key) = self.factory.registry().pools().get(&pool_id).cloned() {
-                    // Create new pool with proper fee configuration
-                    self.handle_new_pool(pool_key, block, bundle_fee, swap_fee, protocol_fee);
+                if self.auto_pool_creation {
+                    self.handle_new_pool(*pool_key, *block, *bundle_fee, *swap_fee, *protocol_fee);
 
                     tracing::info!(
                         "Pool configured: {:?}, bundle_fee: {}, swap_fee: {}, protocol_fee: {}, \
@@ -260,21 +215,28 @@ where
                         tick_spacing
                     );
                 } else {
-                    tracing::warn!("Received PoolConfigured event for unknown pool: {:?}", pool_id);
+                    tracing::info!(
+                        "Ignoring pool configured event (auto creation disabled): {:?}",
+                        pool_id
+                    );
                 }
             }
             PoolUpdate::PoolRemoved { pool_id, .. } => {
-                // TODO: Remove pool from tracking
                 tracing::info!("Pool removed: {:?}", pool_id);
-                self.pools.remove(&pool_id);
+                self.pools.remove(pool_id);
+                self.factory.remove_pool_by_id(*pool_id);
+
+                // Unsubscribe pool from slot0 stream (pool_id here is already angstrom ID)
+                if let Some(slot0_stream) = &mut self.slot0_stream {
+                    slot0_stream.unsubscribe_pools(HashSet::from([*pool_id]));
+                }
             }
             PoolUpdate::FeeUpdate { pool_id, bundle_fee, swap_fee, protocol_fee, .. } => {
-                // Update existing pool's fee configuration
-                if let Some(mut pool) = self.pools.get_pools().get_mut(&pool_id) {
+                if let Some(mut pool) = self.pools.get_pools().get_mut(pool_id) {
                     let fees = pool.fees_mut();
-                    fees.bundle_fee = bundle_fee;
-                    fees.swap_fee = swap_fee;
-                    fees.protocol_fee = protocol_fee;
+                    fees.bundle_fee = *bundle_fee;
+                    fees.swap_fee = *swap_fee;
+                    fees.protocol_fee = *protocol_fee;
 
                     tracing::info!(
                         "Updated fees for pool {:?}: bundle_fee: {}, swap_fee: {}, protocol_fee: \
@@ -289,15 +251,12 @@ where
                 }
             }
             PoolUpdate::UpdatedSlot0 { pool_id, data } => {
-                // TODO: Update pool state from slot0 data after reorg
                 tracing::debug!("Updated slot0 for pool {:?}: {:?}", pool_id, data);
             }
             PoolUpdate::Reorg { from_block, to_block } => {
-                // TODO: Handle reorg - may need to reload pool states
                 tracing::warn!("Reorg detected from block {} to {}", from_block, to_block);
             }
         }
-        Ok(())
     }
 }
 
@@ -306,63 +265,111 @@ where
     P: Provider + Clone + Unpin + 'static,
     Event: PoolEventStream,
     BaselinePoolFactory<P>: Stream<Item = UpdateMessage> + Unpin,
-    S: Unpin
+    S: Slot0Stream
 {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Continuously poll the factory stream
         let this = self.get_mut();
-        loop {
-            match this.factory.poll_next_unpin(cx) {
-                Poll::Ready(Some(update)) => {
-                    // Process the update
-                    match update {
-                        UpdateMessage::NewTicks(pool_id, ticks, tick_bitmap) => {
-                            // Update the pool's tick data
-                            if let Some(mut pool) = this.pools.get_pools().get_mut(&pool_id) {
-                                let baseline = pool.get_baseline_liquidity_mut();
+        match this.factory.poll_next_unpin(cx) {
+            Poll::Ready(Some(update)) => {
+                // Process the update
+                match update {
+                    UpdateMessage::NewTicks(pool_id, ticks, tick_bitmap) => {
+                        // Update the pool's tick data
+                        if let Some(mut pool) = this.pools.get_pools().get_mut(&pool_id) {
+                            let baseline = pool.get_baseline_liquidity_mut();
 
-                                // Merge new ticks with existing ones
-                                baseline.initialized_ticks_mut().extend(ticks);
+                            // Merge new ticks with existing ones
+                            baseline.initialized_ticks_mut().extend(ticks);
 
-                                // Update tick bitmap
-                                for (word_pos, word) in tick_bitmap {
-                                    baseline.update_tick_bitmap(word_pos, word);
-                                }
-
-                                tracing::info!(
-                                    "Updated ticks for pool {:?}, total ticks: {}",
-                                    pool_id,
-                                    baseline.initialized_ticks_mut().len()
-                                );
-                            } else {
-                                tracing::warn!(
-                                    "Received tick update for unknown pool: {:?}",
-                                    pool_id
-                                );
+                            // Update tick bitmap
+                            for (word_pos, word) in tick_bitmap {
+                                baseline.update_tick_bitmap(word_pos, word);
                             }
-                        }
-                        UpdateMessage::NewPool(pool_id, pool_state) => {
-                            // Add new pool to the pools map
-                            this.pools.insert(pool_id, pool_state.clone());
-                            this.event_stream.start_tracking_pool(pool_id);
 
-                            tracing::info!("Added new pool: {:?}", pool_id);
+                            tracing::info!(
+                                "Updated ticks for pool {:?}, total ticks: {}",
+                                pool_id,
+                                baseline.initialized_ticks_mut().len()
+                            );
+                        } else {
+                            tracing::warn!("Received tick update for unknown pool: {:?}", pool_id);
                         }
                     }
-                    // Continue polling for more updates
-                    continue;
-                }
-                Poll::Ready(None) => {
-                    // Stream ended, which shouldn't happen in our case
-                    return Poll::Ready(());
-                }
-                Poll::Pending => {
-                    // No more updates available right now
-                    return Poll::Pending;
+                    UpdateMessage::NewPool(pool_id, pool_state) => {
+                        // Add new pool to the pools map
+                        this.pools.insert(pool_id, pool_state.clone());
+                        this.event_stream.start_tracking_pool(pool_id);
+
+                        // Subscribe new pool to slot0 stream (using angstrom ID)
+                        if let Some(slot0_stream) = &mut this.slot0_stream {
+                            if let Some(angstrom_pool_id) =
+                                this.factory.registry().public_key_from_private(&pool_id)
+                            {
+                                slot0_stream.subscribe_pools(HashSet::from([angstrom_pool_id]));
+                            }
+                        }
+
+                        tracing::info!("Added new pool: {:?}", pool_id);
+                    }
                 }
             }
+            Poll::Ready(None) => {
+                // Stream ended, which shouldn't happen in our case.
+                return Poll::Ready(());
+            }
+            _ => {}
         }
+
+        if !this.factory.is_processing() {
+            let updates = this.pending_updates.drain(..).collect::<Vec<_>>();
+            this.pools.update_pools(updates.clone());
+            for event in updates {
+                this.process_pool_update(event);
+            }
+        }
+
+        while let Poll::Ready(events) = this.event_stream.poll_next_unpin(cx) {
+            if let Some(events) = events {
+                if this.factory.is_processing() {
+                    this.pending_updates.extend(events);
+
+                    continue;
+                }
+
+                this.pools.update_pools(events.clone());
+                for event in events {
+                    this.process_pool_update(event);
+                }
+                // Check tick ranges for all pools after updates
+                for entry in this.pools.get_pools().iter() {
+                    this.factory.check_and_request_ticks_if_needed(
+                        *entry.key(),
+                        entry.value(),
+                        Some(this.current_block)
+                    );
+                }
+            } else {
+                return Poll::Ready(());
+            }
+        }
+
+        let updates = if let Some(slot0_stream) = this.slot0_stream.as_mut() {
+            let mut updates = vec![];
+            while let Poll::Ready(Some(update)) = slot0_stream.poll_next_unpin(cx) {
+                updates.push(update);
+            }
+            updates
+        } else {
+            vec![]
+        };
+
+        for update in updates {
+            this.slot0_update(update);
+        }
+
+        Poll::Pending
     }
 }

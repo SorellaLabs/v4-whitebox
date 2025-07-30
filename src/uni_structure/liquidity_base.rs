@@ -297,9 +297,39 @@ impl BaselineLiquidity {
         &mut self.initialized_ticks
     }
 
+    /// Get immutable reference to initialized ticks
+    pub fn initialized_ticks(&self) -> &HashMap<i32, TickInfo> {
+        &self.initialized_ticks
+    }
+
+    /// Get immutable reference to tick bitmap
+    pub fn tick_bitmap(&self) -> &HashMap<i16, U256> {
+        &self.tick_bitmap
+    }
+
     /// Update tick bitmap
     pub fn update_tick_bitmap(&mut self, word_pos: i16, word: U256) {
         self.tick_bitmap.insert(word_pos, word);
+    }
+
+    /// Get the minimum initialized tick
+    pub fn get_min_initialized_tick(&self) -> Option<i32> {
+        self.initialized_ticks.keys().min().copied()
+    }
+
+    /// Get the maximum initialized tick
+    pub fn get_max_initialized_tick(&self) -> Option<i32> {
+        self.initialized_ticks.keys().max().copied()
+    }
+
+    /// Get the current tick
+    pub fn get_current_tick(&self) -> i32 {
+        self.start_tick
+    }
+
+    /// Get the tick spacing
+    pub fn get_tick_spacing(&self) -> i32 {
+        self.tick_spacing
     }
 }
 

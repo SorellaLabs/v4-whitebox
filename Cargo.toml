@@ -19,6 +19,7 @@ alloy-primitives = { version = "1.2.0", default-features = false, features = [
   "map-foldhash",
   "rand",
 ] }
+jsonrpsee = { version = "0.25.1", features = ["ws-client", "macros"] }
 arraydeque = "0"
 auto_impl = "1"
 base64 = "0.22"

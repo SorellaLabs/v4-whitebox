@@ -18,7 +18,7 @@ use futures::{FutureExt, StreamExt, stream::Stream};
 use thiserror::Error;
 
 use crate::{
-    pool_providers::{PoolEventStream, completed_block_stream::CompletedBlockStream},
+    pool_providers::PoolEventStream,
     uniswap::{
         pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
         pool_key::PoolKey,
@@ -93,6 +93,7 @@ pub enum PoolUpdate {
     /// Pool configured/added via controller
     PoolConfigured {
         pool_id:      PoolId,
+        pool_key:     PoolKey,
         block:        u64,
         bundle_fee:   u32,
         swap_fee:     u32,
@@ -209,6 +210,25 @@ where
             .unwrap()
             .number();
 
+        Self::new_at_block(
+            provider,
+            pool_manager,
+            controller_address,
+            angstrom_address,
+            pool_registry,
+            current_block
+        )
+    }
+
+    /// Create a new pool update provider at a specific block
+    pub fn new_at_block(
+        provider: Arc<P>,
+        pool_manager: Address,
+        controller_address: Address,
+        angstrom_address: Address,
+        pool_registry: UniswapPoolRegistry,
+        current_block: u64
+    ) -> Self {
         Self {
             provider,
             pool_manager,
@@ -243,7 +263,7 @@ where
         block_number: u64
     ) -> Option<PoolUpdate> {
         if let Ok(swap_event) = IUniswapV4Pool::Swap::decode_log(&log.inner) {
-            // Double-check the pool ID (should already be filtered)
+            // Check if we're tracking this Uniswap pool ID
             if self.tracked_pools.contains(&swap_event.id) {
                 let event_data = SwapEventData {
                     sender:         swap_event.sender,
@@ -256,7 +276,7 @@ where
                 };
 
                 return Some(PoolUpdate::SwapEvent {
-                    pool_id:   swap_event.id,
+                    pool_id:   swap_event.id, // Use Uniswap pool ID
                     block:     block_number,
                     tx_index:  log.transaction_index.unwrap(),
                     log_index: log.log_index.unwrap(),
@@ -275,7 +295,7 @@ where
         store_in_history: bool
     ) -> Option<PoolUpdate> {
         if let Ok(modify_event) = IUniswapV4Pool::ModifyLiquidity::decode_log(&log.inner) {
-            // Double-check the pool ID (should already be filtered)
+            // Check if we're tracking this Uniswap pool ID
             if self.tracked_pools.contains(&modify_event.id) {
                 let event_data = ModifyLiquidityEventData {
                     sender:          modify_event.sender,
@@ -291,13 +311,13 @@ where
                         block:           block_number,
                         tx_index:        log.transaction_index.unwrap(),
                         log_index:       log.log_index.unwrap(),
-                        pool_id:         modify_event.id,
+                        pool_id:         modify_event.id, // Use Uniswap pool ID
                         liquidity_event: event_data.clone()
                     });
                 }
 
                 return Some(PoolUpdate::LiquidityEvent {
-                    pool_id:   modify_event.id,
+                    pool_id:   modify_event.id, // Use Uniswap pool ID
                     block:     block_number,
                     tx_index:  log.transaction_index.unwrap(),
                     log_index: log.log_index.unwrap(),
@@ -326,9 +346,15 @@ where
 
                 self.pool_registry.add_new_pool(pool_key.clone());
 
-                let pool_id = PoolId::from(pool_key);
+                // Get the Uniswap pool ID from registry
+                let angstrom_pool_id = PoolId::from(pool_key);
+                let pool_id = self
+                    .pool_registry
+                    .private_key_from_public(&angstrom_pool_id)
+                    .unwrap();
 
                 updates.push(PoolUpdate::PoolConfigured {
+                    pool_key,
                     pool_id,
                     block: block_number,
                     bundle_fee: event.bundleFee.to(),
@@ -347,7 +373,12 @@ where
                     hooks:       self.angstrom_address
                 };
 
-                let pool_id = PoolId::from(pool_key);
+                // Get the Uniswap pool ID from registry
+                let angstrom_pool_id = PoolId::from(pool_key);
+                let pool_id = self
+                    .pool_registry
+                    .private_key_from_public(&angstrom_pool_id)
+                    .unwrap();
 
                 updates.push(PoolUpdate::PoolRemoved { pool_id, block: block_number });
             }
@@ -370,34 +401,39 @@ where
             if let Ok(call) = ControllerV1::batchUpdatePoolsCall::abi_decode(tx.input()) {
                 for update in call.updates {
                     // Normalize asset order
-                    let (asset0, asset1) = if update.assetB > update.assetA {
+                    let (_asset0, _asset1) = if update.assetB > update.assetA {
                         (update.assetA, update.assetB)
                     } else {
                         (update.assetB, update.assetA)
                     };
+                    let pools = self
+                        .pool_registry
+                        .get_pools_by_token_pair(update.assetA, update.assetB);
 
-                    // TODO: This is incorrect - we need to look up the actual pool ID
-                    // from the asset pair. The batchUpdatePools doesn't give us the
-                    // tick spacing or original fee needed to construct the correct pool
-                    // key. We should maintain a mapping of (asset0, asset1) -> PoolId
-                    let pool_key = PoolKey {
-                        currency0:   asset0,
-                        currency1:   asset1,
-                        fee:         update.bundleFee, /* WRONG: Using bundle fee as pool
-                                                        * identifier */
-                        tickSpacing: I24::ZERO, // WRONG: We don't have tick spacing
-                        hooks:       self.angstrom_address
-                    };
+                    // Find the pool with matching fee (or just use the first one if no match)
+                    let pool_key = pools
+                        .iter()
+                        .find(|pk| pk.fee.to::<u32>() == update.bundleFee.to::<u32>())
+                        .or_else(|| pools.first())
+                        .cloned()
+                        .cloned();
 
-                    let pool_id = PoolId::from(pool_key);
+                    if let Some(pool_key) = pool_key {
+                        // Get the Uniswap pool ID from registry
+                        let angstrom_pool_id = PoolId::from(pool_key);
+                        let pool_id = self
+                            .pool_registry
+                            .private_key_from_public(&angstrom_pool_id)
+                            .unwrap();
 
-                    updates.push(PoolUpdate::FeeUpdate {
-                        pool_id,
-                        block: block_number,
-                        bundle_fee: update.bundleFee.to(),
-                        swap_fee: update.unlockedFee.to(),
-                        protocol_fee: update.protocolUnlockedFee.to()
-                    });
+                        updates.push(PoolUpdate::FeeUpdate {
+                            pool_id,
+                            block: block_number,
+                            bundle_fee: update.bundleFee.to(),
+                            swap_fee: update.unlockedFee.to(),
+                            protocol_fee: update.protocolUnlockedFee.to()
+                        });
+                    }
                 }
             }
         }
@@ -419,7 +455,8 @@ where
             return Ok(updates);
         }
 
-        // Create pool topics for filtering
+        // Create pool topics for filtering - tracked_pools already contains Uniswap
+        // pool IDs
         let pool_topics: Vec<_> = self
             .tracked_pools
             .iter()
@@ -545,8 +582,18 @@ where
         self.event_history.retain(|e| e.block >= cutoff_block);
     }
 
-    /// Fetch current slot0 data for a pool
+    /// Fetch current slot0 data for a pool at the current block
     async fn fetch_slot0_data(&self, pool_id: PoolId) -> Result<Slot0Data, PoolUpdateError> {
+        self.fetch_slot0_data_at_block(pool_id, self.current_block)
+            .await
+    }
+
+    /// Fetch slot0 data for a pool at a specific block
+    async fn fetch_slot0_data_at_block(
+        &self,
+        pool_id: PoolId,
+        block: u64
+    ) -> Result<Slot0Data, PoolUpdateError> {
         // Get the internal pool ID from the conversion map
         let internal_pool_id =
             self.pool_registry
@@ -564,9 +611,9 @@ where
             self.pool_manager
         );
 
-        // Load pool data
+        // Load pool data at specific block
         let pool_data = data_loader
-            .load_pool_data(None, self.provider.clone())
+            .load_pool_data(Some(block), self.provider.clone())
             .await
             .map_err(|e| PoolUpdateError::Provider(format!("Failed to load pool data: {e}")))?;
 
@@ -668,14 +715,17 @@ where
             .current_block
             .saturating_sub(REORG_DETECTION_BLOCKS - 1);
 
-        // 1. Get inverse liquidity events
+        // 1. First, emit the reorg event so the pipeline knows a reorg is happening
+        updates.push(PoolUpdate::Reorg { from_block: reorg_start, to_block: self.current_block });
+
+        // 2. Get inverse liquidity events
         let inverse_events = self.get_inverse_liquidity_events(reorg_start, self.current_block);
         updates.extend(inverse_events.clone());
 
-        // 2. Clear affected history
+        // 3. Clear affected history
         self.clear_history_from_block(reorg_start);
 
-        // 3. Re-query the blocks
+        // 4. Re-query the blocks
         match self.backfill_blocks(reorg_start, self.current_block).await {
             Ok(fresh_events) => {
                 // Get affected pools from both inverse and fresh events
@@ -691,7 +741,7 @@ where
 
                 updates.extend(fresh_events);
 
-                // 4. Query slot0 for affected pools
+                // 5. Query slot0 for affected pools
                 for pool_id in affected_pools {
                     if let Ok(slot0_data) = self.fetch_slot0_data(pool_id).await {
                         updates.push(PoolUpdate::UpdatedSlot0 { pool_id, data: slot0_data });
@@ -703,8 +753,6 @@ where
                 panic!("Failed to backfill during reorg: {e}");
             }
         }
-
-        // 5. Add reorg event
         updates.push(PoolUpdate::Reorg { from_block: reorg_start, to_block: self.current_block });
 
         updates
@@ -719,7 +767,10 @@ where
             // Reorg detected!
             updates = self.handle_reorg().await;
         } else if block_number > self.current_block {
-            // Normal block progression
+            // Always emit NewBlock event first for normal block progression
+            updates.push(PoolUpdate::NewBlock(block_number));
+
+            // Then process block events
             match self.process_block_events(block_number).await {
                 Ok(block_updates) => {
                     updates.extend(block_updates);
@@ -737,6 +788,13 @@ where
                 .current_block
                 .saturating_sub(REORG_DETECTION_BLOCKS - 1);
             self.event_history.retain(|e| e.block >= cutoff_block);
+        } else if block_number < self.current_block {
+            // Block is behind our current block, this shouldn't happen in normal operation
+            tracing::warn!(
+                "Received old block {} when current block is {}",
+                block_number,
+                self.current_block
+            );
         }
 
         updates
@@ -760,9 +818,12 @@ where
     }
 }
 
-pub struct StateStream<P: Provider + 'static> {
+pub struct StateStream<P: Provider + 'static, B>
+where
+    B: Stream<Item = Block> + Unpin + Send + 'static
+{
     update_provider:      Option<PoolUpdateProvider<P>>,
-    block_stream:         CompletedBlockStream<P>,
+    block_stream:         B,
     processing:
         Option<Pin<Box<dyn Future<Output = (PoolUpdateProvider<P>, Vec<PoolUpdate>)> + Send>>>,
     start_tracking_pools: Vec<PoolId>,
@@ -770,11 +831,11 @@ pub struct StateStream<P: Provider + 'static> {
     pool_reg:             Option<UniswapPoolRegistry>
 }
 
-impl<P: Provider + 'static> StateStream<P> {
-    pub fn new(
-        update_provider: PoolUpdateProvider<P>,
-        block_stream: CompletedBlockStream<P>
-    ) -> Self {
+impl<P: Provider + 'static, B> StateStream<P, B>
+where
+    B: Stream<Item = Block> + Unpin + Send + 'static
+{
+    pub fn new(update_provider: PoolUpdateProvider<P>, block_stream: B) -> Self {
         Self {
             update_provider: Some(update_provider),
             block_stream,
@@ -786,7 +847,10 @@ impl<P: Provider + 'static> StateStream<P> {
     }
 }
 
-impl<P: Provider + 'static> PoolEventStream for StateStream<P> {
+impl<P: Provider + 'static, B> PoolEventStream for StateStream<P, B>
+where
+    B: Stream<Item = Block> + Unpin + Send + 'static
+{
     fn stop_tracking_pool(&mut self, pool_id: PoolId) {
         if let Some(update_provider) = self.update_provider.as_mut() {
             update_provider.remove_pool(pool_id);
@@ -812,7 +876,10 @@ impl<P: Provider + 'static> PoolEventStream for StateStream<P> {
     }
 }
 
-impl<P: Provider + 'static> Stream for StateStream<P> {
+impl<P: Provider + 'static, B> Stream for StateStream<P, B>
+where
+    B: Stream<Item = Block> + Unpin + Send + 'static
+{
     type Item = Vec<PoolUpdate>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -842,17 +909,21 @@ impl<P: Provider + 'static> Stream for StateStream<P> {
             updater.pool_registry = pool_reg;
         }
 
-        if let Poll::Ready(Some(new_block)) = this.block_stream.poll_next_unpin(cx) {
-            cx.waker().wake_by_ref();
-            let mut update_provider = this.update_provider.take().unwrap();
+        if let Poll::Ready(possible_new_block) = this.block_stream.poll_next_unpin(cx) {
+            if let Some(new_block) = possible_new_block {
+                cx.waker().wake_by_ref();
+                let mut update_provider = this.update_provider.take().unwrap();
 
-            let processing_future = async move {
-                let updates = update_provider.on_new_block(new_block).await;
-                (update_provider, updates)
+                let processing_future = async move {
+                    let updates = update_provider.on_new_block(new_block).await;
+                    (update_provider, updates)
+                }
+                .boxed();
+
+                this.processing = Some(processing_future)
+            } else {
+                return Poll::Ready(None)
             }
-            .boxed();
-
-            this.processing = Some(processing_future)
         }
 
         Poll::Pending

@@ -118,7 +118,8 @@ impl BaselinePoolState {
             steps:               vec![],
             end_liquidity:       self.liquidity.current(),
             protocol_fee_amount: 0,
-            protocol_fee_token:  0
+            protocol_fee_token:  false,
+            is_bundle:           true
         }
     }
 
