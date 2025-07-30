@@ -65,8 +65,6 @@ impl UniswapPools {
         }
 
         let mut new_block_number = 0;
-        println!("{:#?}", updates);
-
         // we sort ascending
         updates.sort_by(|a, b| a.sort(&b));
 
@@ -122,7 +120,7 @@ impl UniswapPools {
             }
         }
 
-        println!("processed block: {}", new_block_number);
+        tracing::debug!("processed block: {}", new_block_number);
 
         assert!(
             new_block_number != 0,
