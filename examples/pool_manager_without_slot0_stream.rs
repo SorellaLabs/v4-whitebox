@@ -5,7 +5,6 @@ use alloy::{
     providers::{Provider, ProviderBuilder}
 };
 use futures::StreamExt;
-use tracing_subscriber;
 use uni_v4::{
     pool_providers::{
         completed_block_stream::CompletedBlockStream,

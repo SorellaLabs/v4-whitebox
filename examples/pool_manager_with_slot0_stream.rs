@@ -6,7 +6,6 @@ use alloy::{
 };
 use futures::StreamExt;
 use jsonrpsee::ws_client::WsClientBuilder;
-use tracing_subscriber;
 use uni_v4::{
     pool_providers::{
         completed_block_stream::CompletedBlockStream,

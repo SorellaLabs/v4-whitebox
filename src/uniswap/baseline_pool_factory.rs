@@ -61,6 +61,7 @@ impl<P: Provider + 'static> BaselinePoolFactory<P>
 where
     DataLoader: PoolDataLoader
 {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         deploy_block: u64,
         current_block: u64,
@@ -132,7 +133,7 @@ where
     }
 
     pub fn is_processing(&self) -> bool {
-        !(self.tick_loading.is_empty() || !self.pool_generator.is_empty())
+        !(self.tick_loading.is_empty() || self.pool_generator.is_empty())
     }
 
     pub fn registry(&self) -> UniswapPoolRegistry {
@@ -887,7 +888,7 @@ impl<P: Provider + Clone + Unpin + 'static> Stream for BaselinePoolFactory<P> {
         let this = self.get_mut();
 
         // First, try to poll tick loading futures
-        while let std::task::Poll::Ready(Some((pool_id, ticks, tick_bitmap))) =
+        if let std::task::Poll::Ready(Some((pool_id, ticks, tick_bitmap))) =
             this.tick_loading.poll_next_unpin(cx)
         {
             return std::task::Poll::Ready(Some(UpdateMessage::NewTicks(

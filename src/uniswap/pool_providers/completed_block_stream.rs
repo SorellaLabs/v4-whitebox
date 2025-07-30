@@ -88,7 +88,7 @@ impl<P: Provider + 'static> Stream for CompletedBlockStream<P> {
                 }
             }
 
-            while let Poll::Ready(Some(block)) = this.processing_blocks.poll_next_unpin(cx) {
+            if let Poll::Ready(Some(block)) = this.processing_blocks.poll_next_unpin(cx) {
                 if block.header.parent_hash != this.prev_block_hash
                     && block.number() != this.prev_block_number + 1
                     // for reorgs.

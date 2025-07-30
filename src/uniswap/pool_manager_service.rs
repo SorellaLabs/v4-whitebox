@@ -73,6 +73,7 @@ where
     S: Slot0Stream
 {
     /// Create a new PoolManagerService
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         provider: Arc<P>,
         event_stream: Event,
