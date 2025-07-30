@@ -2,7 +2,8 @@ use std::{
     collections::HashMap,
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll}
+    task::{Context, Poll},
+    time::Duration
 };
 
 use alloy::{
@@ -23,8 +24,8 @@ use uni_v4::{
 };
 
 // Test configuration - Uses ETH_URL environment variable
-fn get_eth_url() -> String {
-    std::env::var("ETH_URL").unwrap_or_else(|_| "ws://localhost:8545".to_string())
+fn get_eth_url() -> Option<String> {
+    std::env::var("ETH_URL").ok()
 }
 
 use futures::future::BoxFuture;
@@ -75,6 +76,7 @@ impl<P: Provider + 'static> Stream for HistoricalBlockStream<P> {
                 let block_num = self.current_block;
 
                 let future = Box::pin(async move {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
                     match provider.get_block(BlockId::Number(block_num.into())).await {
                         Ok(Some(block)) => Some(block),
                         _ => None
@@ -92,6 +94,10 @@ impl<P: Provider + 'static> Stream for HistoricalBlockStream<P> {
 async fn test_pool_state_consistency() {
     // Get ETH URL from environment
     let eth_url = get_eth_url();
+    let Some(eth_url) = eth_url else {
+        println!("No ETH_URL SET, returning");
+        return;
+    };
 
     // block range were 50k liq was added
     let deploy_block = 22971782; // Deployment block
