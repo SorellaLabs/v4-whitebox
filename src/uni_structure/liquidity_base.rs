@@ -291,6 +291,16 @@ impl BaselineLiquidity {
             tick_bitmap: &self.tick_bitmap
         }
     }
+
+    /// Get mutable reference to initialized ticks
+    pub fn initialized_ticks_mut(&mut self) -> &mut HashMap<i32, TickInfo> {
+        &mut self.initialized_ticks
+    }
+
+    /// Update tick bitmap
+    pub fn update_tick_bitmap(&mut self, word_pos: i16, word: U256) {
+        self.tick_bitmap.insert(word_pos, word);
+    }
 }
 
 /// represents the liquidity at a specified point. All operations use this

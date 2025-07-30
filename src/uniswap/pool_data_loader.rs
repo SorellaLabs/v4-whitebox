@@ -15,12 +15,12 @@ use super::{
         get_uniswap_v_4_pool_data::GetUniswapV4PoolData,
         get_uniswap_v_4_tick_data::GetUniswapV4TickData
     },
-    pool::PoolId as AngstromPoolId,
-    pool_registry::UniswapPoolRegistry
+    pool_registry::UniswapPoolRegistry,
+    pools::PoolId as AngstromPoolId
 };
 use crate::{
     uni_structure::{ray::Ray, sqrt_pricex96::SqrtPriceX96},
-    uniswap::{i128_to_i256, pool::PoolError}
+    uniswap::{i128_to_i256, pools::PoolError}
 };
 
 sol! {

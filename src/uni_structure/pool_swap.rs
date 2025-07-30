@@ -19,7 +19,8 @@ pub struct PoolSwap<'a> {
     /// zfo = true
     pub(super) direction:     bool,
     // the fee configuration of the pool.
-    pub(super) fee_config:    FeeConfiguration
+    pub(super) fee_config:    FeeConfiguration,
+    pub(super) is_bundle:     bool
 }
 
 impl<'a> PoolSwap<'a> {
@@ -72,8 +73,7 @@ impl<'a> PoolSwap<'a> {
             };
 
             // Use 0 fee for bundle mode, swap_fee for unlocked mode
-            let swap_fee =
-                if self.fee_config.is_bundle_mode { 0 } else { self.fee_config.swap_fee };
+            let swap_fee = if self.is_bundle { 0 } else { self.fee_config.swap_fee };
 
             let (new_sqrt_price_x_96, amount_in, amount_out, fee_amount) =
                 uniswap_v3_math::swap_math::compute_swap_step(
@@ -123,7 +123,7 @@ impl<'a> PoolSwap<'a> {
         });
 
         // Calculate protocol fee for unlocked mode
-        let (protocol_fee_amount, protocol_fee_token) = if !self.fee_config.is_bundle_mode {
+        let (protocol_fee_amount, protocol_fee_token) = if !self.is_bundle {
             // In unlocked mode, apply protocol fee to the input amount
             let input_amount = if self.direction { total_d_t0 } else { total_d_t1 };
             let protocol_fee_token = if self.direction { 0 } else { 1 }; // 0 for token0, 1 for token1
@@ -150,7 +150,8 @@ impl<'a> PoolSwap<'a> {
             steps,
             end_liquidity: self.liquidity,
             protocol_fee_amount,
-            protocol_fee_token
+            protocol_fee_token,
+            is_bundle: self.is_bundle
         })
     }
 }
@@ -167,7 +168,8 @@ pub struct PoolSwapResult<'a> {
     pub steps:               Vec<PoolSwapStep>,
     pub end_liquidity:       LiquidityAtPoint<'a>,
     pub protocol_fee_amount: u128,
-    pub protocol_fee_token:  u32 // 0 for token0, 1 for token1
+    pub protocol_fee_token:  u32, // 0 for token0, 1 for token1
+    pub is_bundle:           bool
 }
 
 impl<'a> PoolSwapResult<'a> {
@@ -182,7 +184,8 @@ impl<'a> PoolSwapResult<'a> {
             target_price: None,
             direction,
             target_amount: amount,
-            fee_config: self.fee_config.clone()
+            fee_config: self.fee_config.clone(),
+            is_bundle: self.is_bundle
         }
         .swap()
     }
@@ -195,7 +198,8 @@ impl<'a> PoolSwapResult<'a> {
             target_price: Some(price_limit),
             direction,
             target_amount: I256::MAX,
-            fee_config: self.fee_config.clone()
+            fee_config: self.fee_config.clone(),
+            is_bundle: self.is_bundle
         }
         .swap()?;
 

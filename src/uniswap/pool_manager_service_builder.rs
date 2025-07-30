@@ -16,7 +16,7 @@ use super::{
     pool_registry::UniswapPoolRegistry,
     pools::PoolId
 };
-use crate::pool_providers::PoolEventStream;
+use crate::{pool_providers::PoolEventStream, pools::UniswapPools};
 
 /// Update for slot0 data of a pool
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -158,15 +158,22 @@ where
         // Set the controller address for the fetch_pool_keys module
         set_controller_address(self.controller_address);
 
+        // Get current block number
+        let current_block = self.provider.get_block_number().await.unwrap();
+
         // Create registry and factory
         let registry = UniswapPoolRegistry::default();
         let tick_range_size = self.initial_tick_range_size.unwrap_or(400);
-        let factory = BaselinePoolFactory::new(
+        let (factory, pools) = BaselinePoolFactory::new(
+            self.deploy_block,
+            current_block,
+            self.angstrom_address,
             self.provider.clone(),
             registry,
             self.pool_manager_address,
-            self.initial_tick_range_size
-        );
+            Some(tick_range_size)
+        )
+        .await;
 
         // Get event stream or create default
         let event_stream = self.event_stream.unwrap_or_default();
@@ -179,7 +186,7 @@ where
             angstrom_address: self.angstrom_address,
             controller_address: self.controller_address,
             deploy_block: self.deploy_block,
-            pools: HashMap::new(),
+            pools: UniswapPools::new(pools, current_block),
             current_block: self.deploy_block,
             is_bundle_mode: self.is_bundle_mode,
             auto_pool_creation: self.auto_pool_creation,
@@ -189,9 +196,11 @@ where
 
         // Initialize with either fixed pools or discovered pools
         if let Some(fixed_pools) = self.fixed_pools {
-            service.initialize_with_fixed_pools(fixed_pools).await?;
+            // TODO: Implement initialize_with_fixed_pools
+            // service.initialize_with_fixed_pools(fixed_pools).await?;
         } else {
-            service.initialize().await?;
+            // TODO: Implement initialize
+            // service.initialize().await?;
         }
 
         // Register pools with event stream
@@ -229,6 +238,8 @@ impl PoolEventStream for NoOpEventStream {
     fn start_tracking_pool(&mut self, _pool_id: PoolId) {}
 
     fn stop_tracking_pool(&mut self, _pool_id: PoolId) {}
+
+    fn set_pool_registry(&mut self, _pool_registry: UniswapPoolRegistry) {}
 }
 
 impl Default for NoOpEventStream {

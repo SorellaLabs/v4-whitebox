@@ -7,10 +7,9 @@ use sqrt_pricex96::SqrtPriceX96;
 /// Fee configuration for different pool modes
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FeeConfiguration {
-    pub is_bundle_mode: bool,
-    pub bundle_fee:     u32, // Stored fee for bundle mode
-    pub swap_fee:       u32, // Applied during swaps in unlocked mode
-    pub protocol_fee:   u32  // Applied after swaps in unlocked mode (basis points in 1e6)
+    pub bundle_fee:   u32, // Stored fee for bundle mode
+    pub swap_fee:     u32, // Applied during swaps in unlocked mode
+    pub protocol_fee: u32  // Applied after swaps in unlocked mode (basis points in 1e6)
 }
 
 pub mod liquidity_base;
@@ -67,16 +66,12 @@ impl BaselinePoolState {
         &mut self.fee_config
     }
 
-    pub fn fee(&self) -> u32 {
-        if self.fee_config.is_bundle_mode {
+    pub fn fee(&self, bundle: bool) -> u32 {
+        if bundle {
             self.fee_config.bundle_fee
         } else {
-            self.fee_config.swap_fee
+            self.fee_config.swap_fee + self.fee_config.protocol_fee
         }
-    }
-
-    pub fn is_bundle_mode(&self) -> bool {
-        self.fee_config.is_bundle_mode
     }
 
     pub fn bundle_fee(&self) -> u32 {
@@ -130,7 +125,8 @@ impl BaselinePoolState {
     pub fn swap_current_with_amount(
         &self,
         amount: I256,
-        direction: bool
+        direction: bool,
+        is_bundle: bool
     ) -> eyre::Result<PoolSwapResult<'_>> {
         let liq = self.liquidity.current();
 
@@ -139,7 +135,8 @@ impl BaselinePoolState {
             target_amount: amount,
             target_price: None,
             direction,
-            fee_config: self.fee_config.clone()
+            fee_config: self.fee_config.clone(),
+            is_bundle
         }
         .swap()
     }
@@ -149,7 +146,8 @@ impl BaselinePoolState {
     /// sure the values always align perfectly.
     pub fn swap_current_to_price(
         &self,
-        price_limit: SqrtPriceX96
+        price_limit: SqrtPriceX96,
+        is_bundle: bool
     ) -> eyre::Result<PoolSwapResult<'_>> {
         let liq = self.liquidity.current();
         let direction = liq.current_sqrt_price >= price_limit;
@@ -159,19 +157,23 @@ impl BaselinePoolState {
             target_amount: I256::MAX,
             target_price: Some(price_limit),
             direction,
-            fee_config: self.fee_config.clone()
+            fee_config: self.fee_config.clone(),
+            is_bundle
         }
         .swap()?;
 
         let amount_in = if direction { price_swap.total_d_t0 } else { price_swap.total_d_t1 };
         let amount = I256::unchecked_from(amount_in);
 
-        self.swap_current_with_amount(amount, direction)
+        self.swap_current_with_amount(amount, direction, is_bundle)
     }
 
+    /// Angstrom operates everything on amount in, If we don't need this
+    /// precision, then we can do raw.
     pub fn swap_current_to_price_raw(
         &self,
-        price_limit: SqrtPriceX96
+        price_limit: SqrtPriceX96,
+        is_bundle: bool
     ) -> eyre::Result<PoolSwapResult<'_>> {
         let liq = self.liquidity.current();
 
@@ -182,8 +184,17 @@ impl BaselinePoolState {
             target_amount: I256::MAX,
             target_price: Some(price_limit),
             direction,
-            fee_config: self.fee_config.clone()
+            fee_config: self.fee_config.clone(),
+            is_bundle
         }
         .swap()
+    }
+
+    pub fn get_baseline_liquidity(&self) -> &BaselineLiquidity {
+        &self.liquidity
+    }
+
+    pub fn get_baseline_liquidity_mut(&mut self) -> &mut BaselineLiquidity {
+        &mut self.liquidity
     }
 }

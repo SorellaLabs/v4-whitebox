@@ -1,4 +1,7 @@
-use std::sync::{Arc, atomic::AtomicU64};
+use std::{
+    ops::Deref,
+    sync::{Arc, atomic::AtomicU64}
+};
 
 use alloy_primitives::{B256, FixedBytes};
 use dashmap::{DashMap, mapref::one::Ref};
@@ -17,6 +20,14 @@ pub struct UniswapPools {
     // When the manager for the pools pushes a new block. It will notify all people who are
     // waiting.
     notifier:     Arc<Notify>
+}
+
+impl Deref for UniswapPools {
+    type Target = Arc<DashMap<PoolId, BaselinePoolState>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.pools
+    }
 }
 
 impl UniswapPools {
