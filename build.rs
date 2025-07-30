@@ -55,7 +55,6 @@ fn main() {
     });
 
     let res = Command::new(forge_path)
-        .env("FOUNDRY_PROFILE", "loaders")
         .arg("build")
         .arg("--optimize")
         .arg("--optimizer-runs")

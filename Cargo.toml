@@ -12,15 +12,14 @@ alloy = { version = "1.0.13", features = [
   "rpc-types-trace",
   "json-rpc",
   "rpc-client",
-  "signer-keystore",
-  "signer-ledger",
-  "signer-mnemonic",
-  "signer-trezor",
-  "signer-yubihsm",
   "sol-types",
   "contract",
 ] }
-alloy-primitives = { version = "1.2.0", default-features = false, features = ["map-foldhash", "rand"] }
+alloy-primitives = { version = "1.2.0", default-features = false, features = [
+  "map-foldhash",
+  "rand",
+] }
+jsonrpsee = { version = "0.25.1", features = ["ws-client", "macros"] }
 arraydeque = "0"
 auto_impl = "1"
 base64 = "0.22"
@@ -39,7 +38,10 @@ rayon = "1"
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
-tokio = { version = "^1.44.2", features = ["full", "tracing"], default-features = false }
+tokio = { version = "^1.44.2", features = [
+  "full",
+  "tracing",
+], default-features = false }
 tracing = "0"
 tracing-subscriber = "0.3.19"
 uniswap_v3_math = { git = "https://github.com/SorellaLabs/v3-math", branch = "main" }

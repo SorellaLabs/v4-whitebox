@@ -3,7 +3,7 @@ src = "src"
 out = "out"
 libs = ["lib"]
 optimizer = true
-optimizer_runs = 9999999999
+optimizer_runs = 0
 
 solc = "0.8.26"
 bytecode_hash = "none"
@@ -28,4 +28,3 @@ remappings = [
   "solady/src/=lib/angstrom/contracts/lib/solady/src/",
   "solmate/=lib/angstrom/contracts/lib/solmate/",
 ]
-

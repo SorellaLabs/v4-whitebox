@@ -15,12 +15,12 @@ use super::{
         get_uniswap_v_4_pool_data::GetUniswapV4PoolData,
         get_uniswap_v_4_tick_data::GetUniswapV4TickData
     },
-    pool::PoolId as AngstromPoolId,
-    pool_registry::UniswapPoolRegistry
+    pool_registry::UniswapPoolRegistry,
+    pools::PoolId as AngstromPoolId
 };
 use crate::{
     uni_structure::{ray::Ray, sqrt_pricex96::SqrtPriceX96},
-    uniswap::{i128_to_i256, pool::PoolError}
+    uniswap::{i128_to_i256, pools::PoolError}
 };
 
 sol! {
@@ -185,13 +185,7 @@ impl PoolDataLoader for DataLoader {
     fn pool_fee(&self) -> u32 {
         let id = self.public_address();
 
-        let pool_key = self
-            .pool_registry
-            .as_ref()
-            .unwrap()
-            .get(&id)
-            .unwrap()
-            .clone();
+        let pool_key = *self.pool_registry.as_ref().unwrap().get(&id).unwrap();
 
         pool_key.fee.to()
     }
@@ -203,13 +197,7 @@ impl PoolDataLoader for DataLoader {
     ) -> Result<PoolData, PoolError> {
         let id = self.public_address();
 
-        let pool_key = self
-            .pool_registry
-            .as_ref()
-            .unwrap()
-            .get(&id)
-            .unwrap()
-            .clone();
+        let pool_key = *self.pool_registry.as_ref().unwrap().get(&id).unwrap();
 
         tracing::trace!(?block_number, ?pool_key, "loading pool data");
 
