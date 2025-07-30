@@ -98,7 +98,7 @@ async fn test_pool_state_consistency() {
     // block range were 50k liq was added
     let deploy_block = 22971782; // Deployment block
     let initial_block = 23033108 - 4200;
-    let num_blocks_to_stream = 101;
+    let num_blocks_to_stream = 1000;
     let final_block = initial_block + num_blocks_to_stream;
 
     // Real addresses from Sepolia deployment

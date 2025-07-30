@@ -329,6 +329,15 @@ where
             for event in updates {
                 this.process_pool_update(event);
             }
+
+            // Check tick ranges for all pools after updates
+            for entry in this.pools.get_pools().iter() {
+                this.factory.check_and_request_ticks_if_needed(
+                    *entry.key(),
+                    entry.value(),
+                    Some(this.current_block)
+                );
+            }
         }
 
         while let Poll::Ready(events) = this.event_stream.poll_next_unpin(cx) {
