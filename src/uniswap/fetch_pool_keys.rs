@@ -105,7 +105,6 @@ where
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
-    tracing::info!(?logs);
 
     logs.into_iter()
         .fold(HashSet::new(), |mut set, log| {
