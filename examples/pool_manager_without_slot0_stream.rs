@@ -4,8 +4,7 @@ use alloy::{
     primitives::address,
     providers::{Provider, ProviderBuilder}
 };
-use futures::StreamExt;
-use uni_v4::{
+use angstrom_v4::{
     pool_providers::{
         completed_block_stream::CompletedBlockStream,
         pool_update_provider::{PoolUpdateProvider, StateStream}
@@ -16,6 +15,7 @@ use uni_v4::{
         pool_manager_service_builder::PoolManagerServiceBuilder, pool_registry::UniswapPoolRegistry
     }
 };
+use futures::StreamExt;
 
 /// Example demonstrating PoolManagerServiceBuilder without slot0 stream
 ///

@@ -5,9 +5,7 @@ use alloy::{
     providers::{Provider, ProviderBuilder}
 };
 use alloy_primitives::{I256, U160};
-use futures::StreamExt;
-use jsonrpsee::ws_client::WsClientBuilder;
-use uni_v4::{
+use angstrom_v4::{
     pool_providers::{
         completed_block_stream::CompletedBlockStream,
         pool_update_provider::{PoolUpdateProvider, StateStream}
@@ -19,6 +17,8 @@ use uni_v4::{
         pool_registry::UniswapPoolRegistry, pools::PoolId, slot0::Slot0Client
     }
 };
+use futures::StreamExt;
+use jsonrpsee::ws_client::WsClientBuilder;
 
 /// Example demonstrating PoolManagerServiceBuilder with slot0 stream for
 /// real-time updates
