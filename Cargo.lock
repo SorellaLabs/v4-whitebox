@@ -829,6 +829,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "angstrom-v4"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "alloy-primitives",
+ "arraydeque",
+ "auto_impl",
+ "base64",
+ "convert_case",
+ "dashmap",
+ "eyre",
+ "futures",
+ "futures-util",
+ "hex",
+ "itertools 0.10.5",
+ "jsonrpsee",
+ "malachite",
+ "malachite-q",
+ "mockall",
+ "pade",
+ "pade-macro",
+ "rand 0.9.1",
+ "rayon",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "tracing-subscriber",
+ "uniswap_v3_math",
+]
+
+[[package]]
 name = "anstyle"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4394,41 +4429,6 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
-
-[[package]]
-name = "uni-v4"
-version = "0.1.0"
-dependencies = [
- "alloy",
- "alloy-primitives",
- "arraydeque",
- "auto_impl",
- "base64",
- "convert_case",
- "dashmap",
- "eyre",
- "futures",
- "futures-util",
- "hex",
- "itertools 0.13.0",
- "jsonrpsee",
- "malachite",
- "malachite-q",
- "mockall",
- "pade",
- "pade-macro",
- "rand 0.9.1",
- "rayon",
- "serde",
- "serde_json",
- "serial_test",
- "thiserror 1.0.69",
- "tokio",
- "tokio-test",
- "tracing",
- "tracing-subscriber",
- "uniswap_v3_math",
-]
 
 [[package]]
 name = "unicode-ident"
