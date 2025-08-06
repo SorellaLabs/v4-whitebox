@@ -15,6 +15,7 @@ path = "pool_manager_without_slot0_stream.rs"
 
 [dependencies]
 # Internal dependencies
+uni-v4-common.workspace = true
 uni-v4-structure.workspace = true
 uni-v4-upkeeper.workspace = true
 

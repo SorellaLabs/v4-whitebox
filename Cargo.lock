@@ -857,6 +857,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uni-v4-common",
  "uni-v4-structure",
  "uni-v4-upkeeper",
  "uniswap_v3_math",
@@ -4309,6 +4310,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
+name = "uni-v4-common"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "alloy-primitives",
+ "dashmap",
+ "eyre",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uni-v4-structure",
+ "uniswap_v3_math",
+]
+
+[[package]]
 name = "uni-v4-examples"
 version = "0.1.0"
 dependencies = [
@@ -4320,6 +4337,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uni-v4-common",
  "uni-v4-structure",
  "uni-v4-upkeeper",
 ]
@@ -4367,6 +4385,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uni-v4-common",
  "uni-v4-structure",
  "uniswap_v3_math",
 ]

@@ -6,7 +6,8 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Internal dependency
+# Internal dependencies
+uni-v4-common.workspace = true
 uni-v4-structure.workspace = true
 
 # External dependencies

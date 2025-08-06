@@ -10,8 +10,7 @@ use tokio::sync::{Notify, futures::Notified};
 use uni_v4_structure::BaselinePoolState;
 use uniswap_v3_math::error::UniswapV3MathError;
 
-use super::ConversionError;
-use crate::pool_providers::pool_update_provider::PoolUpdate;
+use crate::updates::PoolUpdate;
 
 #[derive(Clone)]
 pub struct UniswapPools {
@@ -60,7 +59,7 @@ impl UniswapPools {
         self.notifier.notified()
     }
 
-    pub(crate) fn update_pools(&self, mut updates: Vec<PoolUpdate>) {
+    pub fn update_pools(&self, mut updates: Vec<PoolUpdate>) {
         if updates.is_empty() {
             return
         }
@@ -167,8 +166,6 @@ pub enum PoolError {
     AlloyContractError(#[from] alloy::contract::Error),
     #[error(transparent)]
     AlloySolTypeError(#[from] alloy::sol_types::Error),
-    #[error(transparent)]
-    ConversionError(#[from] ConversionError),
     #[error(transparent)]
     Eyre(#[from] eyre::Error)
 }

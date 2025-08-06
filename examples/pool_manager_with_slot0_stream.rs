@@ -6,6 +6,7 @@ use alloy::{
 };
 use futures::StreamExt;
 use jsonrpsee::ws_client::WsClientBuilder;
+use uni_v4_common::PoolId;
 use uni_v4_upkeeper::{
     pool_manager_service_builder::PoolManagerServiceBuilder,
     pool_providers::{
@@ -13,7 +14,6 @@ use uni_v4_upkeeper::{
         pool_update_provider::{PoolUpdateProvider, StateStream}
     },
     pool_registry::UniswapPoolRegistry,
-    pools::PoolId,
     slot0::{NoOpSlot0Stream, Slot0Client}
 };
 

@@ -4,18 +4,17 @@ use alloy::{
     primitives::address,
     providers::{Provider, ProviderBuilder}
 };
-use angstrom_v4::{
+use angstrom_v4::PoolId;
+use futures::StreamExt;
+use uni_v4_upkeeper::{
+    pool_manager_service_builder::PoolManagerServiceBuilder,
     pool_providers::{
         completed_block_stream::CompletedBlockStream,
         pool_update_provider::{PoolUpdateProvider, StateStream}
     },
-    pools::PoolId,
-    slot0::NoOpSlot0Stream,
-    uniswap::{
-        pool_manager_service_builder::PoolManagerServiceBuilder, pool_registry::UniswapPoolRegistry
-    }
+    pool_registry::UniswapPoolRegistry,
+    slot0::NoOpSlot0Stream
 };
-use futures::StreamExt;
 
 const BLOCK_REQUERY: Duration = Duration::from_millis(150);
 

@@ -1,9 +1,7 @@
 use futures::Stream;
+use uni_v4_common::{PoolId, PoolUpdate};
 
-use crate::{
-    pool_providers::pool_update_provider::PoolUpdate, pool_registry::UniswapPoolRegistry,
-    pools::PoolId
-};
+use crate::pool_registry::UniswapPoolRegistry;
 
 pub mod completed_block_stream;
 pub mod pool_update_provider;

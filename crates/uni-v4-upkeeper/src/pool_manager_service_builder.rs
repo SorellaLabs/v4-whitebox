@@ -2,13 +2,13 @@ use std::{collections::HashSet, sync::Arc};
 
 use alloy::{primitives::Address, providers::Provider};
 use futures::Stream;
+use uni_v4_common::PoolId;
 
 use super::{
     pool_data_loader::DataLoader,
     pool_key::PoolKey,
     pool_manager_service::{PoolManagerService, PoolManagerServiceError},
     pool_registry::UniswapPoolRegistry,
-    pools::PoolId,
     slot0::Slot0Stream
 };
 use crate::pool_providers::PoolEventStream;
@@ -195,7 +195,7 @@ impl Default for NoOpEventStream {
 }
 
 impl Stream for NoOpEventStream {
-    type Item = Vec<crate::pool_providers::pool_update_provider::PoolUpdate>;
+    type Item = Vec<uni_v4_common::PoolUpdate>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,

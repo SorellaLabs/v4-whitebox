@@ -8,19 +8,15 @@ use std::{
 use alloy::{primitives::Address, providers::Provider};
 use futures::{Future, Stream, StreamExt};
 use thiserror::Error;
+use uni_v4_common::{PoolId, PoolUpdate, Slot0Update, UniswapPools};
 use uni_v4_structure::BaselinePoolState;
 
 use super::{
     baseline_pool_factory::{BaselinePoolFactory, BaselinePoolFactoryError, UpdateMessage},
     fetch_pool_keys::set_controller_address,
-    pool_key::PoolKey,
-    pools::PoolId
+    pool_key::PoolKey
 };
-use crate::{
-    pool_providers::{PoolEventStream, pool_update_provider::PoolUpdate},
-    pools::UniswapPools,
-    slot0::{Slot0Stream, Slot0Update}
-};
+use crate::{pool_providers::PoolEventStream, slot0::Slot0Stream};
 
 /// Pool information combining BaselinePoolState with token metadata
 #[derive(Debug, Clone)]
@@ -192,28 +188,40 @@ where
             PoolUpdate::LiquidityEvent { pool_id, event, .. } => {
                 tracing::debug!("Liquidity event for pool {:?}: {:?}", pool_id, event);
             }
-            PoolUpdate::PoolConfigured {
-                pool_key,
+            PoolUpdate::NewPool {
                 pool_id,
+                token0: _,
+                token1: _,
                 bundle_fee,
                 swap_fee,
                 protocol_fee,
                 tick_spacing,
-                block,
-                ..
+                block
             } => {
                 if self.auto_pool_creation {
-                    self.handle_new_pool(*pool_key, *block, *bundle_fee, *swap_fee, *protocol_fee);
+                    // Reconstruct pool_key from the NewPool data
+                    // We need to get the pool_key from the registry
+                    if let Some(pool_key) = self.factory.registry().pools.get(pool_id) {
+                        self.handle_new_pool(
+                            *pool_key,
+                            *block,
+                            *bundle_fee,
+                            *swap_fee,
+                            *protocol_fee
+                        );
 
-                    tracing::info!(
-                        "Pool configured: {:?}, bundle_fee: {}, swap_fee: {}, protocol_fee: {}, \
-                         tick_spacing: {}",
-                        pool_id,
-                        bundle_fee,
-                        swap_fee,
-                        protocol_fee,
-                        tick_spacing
-                    );
+                        tracing::info!(
+                            "Pool configured: {:?}, bundle_fee: {}, swap_fee: {}, protocol_fee: \
+                             {}, tick_spacing: {}",
+                            pool_id,
+                            bundle_fee,
+                            swap_fee,
+                            protocol_fee,
+                            tick_spacing
+                        );
+                    } else {
+                        tracing::warn!("Pool {:?} not found in registry", pool_id);
+                    }
                 } else {
                     tracing::info!(
                         "Ignoring pool configured event (auto creation disabled): {:?}",

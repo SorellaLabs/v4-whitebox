@@ -10,7 +10,6 @@ pub mod pool_manager_service;
 pub mod pool_manager_service_builder;
 pub mod pool_providers;
 pub mod pool_registry;
-pub mod pools;
 pub mod slot0;
 
 fn i128_to_i256(value: i128) -> I256 {

@@ -6,16 +6,13 @@ use std::{
     task::{Context, Poll, Waker}
 };
 
-use alloy::primitives::U160;
 use futures::{FutureExt, Stream, StreamExt};
 use jsonrpsee::{
-    core::{ClientError, Serialize, client::Subscription},
+    core::{ClientError, client::Subscription},
     proc_macros::rpc,
     ws_client::WsClient
 };
-use serde::Deserialize;
-
-use super::pools::PoolId;
+use uni_v4_common::{PoolId, Slot0Update};
 
 #[rpc(client, namespace = "angstrom")]
 #[async_trait::async_trait]
@@ -26,20 +23,6 @@ pub trait SubApi {
         item = Slot0Update
     )]
     async fn subscribe_amm(&self, pools: HashSet<PoolId>) -> jsonrpsee::core::SubscriptionResult;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct Slot0Update {
-    /// there will be 120 updates per block or per 100ms
-    pub seq_id:           u16,
-    /// in case of block lag on node
-    pub current_block:    u64,
-    pub angstrom_pool_id: PoolId,
-    pub uni_pool_id:      PoolId,
-
-    pub sqrt_price_x96: U160,
-    pub liquidity:      u128,
-    pub tick:           i32
 }
 
 /// Trait for streams that provide slot0 updates with dynamic pool subscription

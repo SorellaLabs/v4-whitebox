@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     collections::{HashSet, VecDeque},
     future::Future,
     pin::Pin,
@@ -10,20 +9,20 @@ use std::{
 use alloy::{
     consensus::Transaction,
     eips::BlockId,
-    primitives::{Address, I256, U160, aliases::I24},
+    primitives::{Address, U160, aliases::I24},
     providers::Provider,
     rpc::types::{Block, Filter},
     sol_types::{SolCall, SolEvent}
 };
 use futures::{FutureExt, StreamExt, stream::Stream};
 use thiserror::Error;
+use uni_v4_common::{ModifyLiquidityEventData, PoolId, PoolUpdate, Slot0Data, SwapEventData};
 
 use crate::{
     pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
     pool_key::PoolKey,
     pool_providers::PoolEventStream,
-    pool_registry::UniswapPoolRegistry,
-    pools::PoolId
+    pool_registry::UniswapPoolRegistry
 };
 
 /// Number of blocks to keep in history for reorg detection
@@ -66,103 +65,6 @@ pub enum PoolUpdateError {
     EventDecode(String),
     #[error("Reorg handling error: {0}")]
     ReorgHandling(String)
-}
-
-/// Represents different types of pool updates
-#[derive(Debug, Clone)]
-pub enum PoolUpdate {
-    /// New block has been processed
-    NewBlock(u64),
-    /// Swap event occurred
-    SwapEvent {
-        pool_id:   PoolId,
-        block:     u64,
-        tx_index:  u64,
-        log_index: u64,
-        event:     SwapEventData
-    },
-    /// Liquidity modification event occurred
-    LiquidityEvent {
-        pool_id:   PoolId,
-        block:     u64,
-        tx_index:  u64,
-        log_index: u64,
-        event:     ModifyLiquidityEventData
-    },
-    /// Pool configured/added via controller
-    PoolConfigured {
-        pool_id:      PoolId,
-        pool_key:     PoolKey,
-        block:        u64,
-        bundle_fee:   u32,
-        swap_fee:     u32,
-        protocol_fee: u32,
-        tick_spacing: i32
-    },
-    /// Pool removed via controller
-    PoolRemoved { pool_id: PoolId, block: u64 },
-    /// Fee update event. the pool_id here is the uniswap pool_id
-    FeeUpdate {
-        pool_id:      PoolId,
-        block:        u64,
-        bundle_fee:   u32,
-        swap_fee:     u32,
-        protocol_fee: u32
-    },
-    /// Reorg detected
-    Reorg { from_block: u64, to_block: u64 },
-    /// Updated slot0 data after reorg
-    UpdatedSlot0 { pool_id: PoolId, data: Slot0Data }
-}
-
-impl PoolUpdate {
-    pub fn sort(&self, b: &Self) -> Ordering {
-        let (this_tx_index, this_log_index) = match self {
-            PoolUpdate::SwapEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
-            PoolUpdate::LiquidityEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
-            _ => (u64::MAX, u64::MAX)
-        };
-
-        let (other_tx_index, other_log_index) = match b {
-            PoolUpdate::SwapEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
-            PoolUpdate::LiquidityEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
-            _ => (u64::MAX, u64::MAX)
-        };
-
-        this_tx_index
-            .cmp(&other_tx_index)
-            .then_with(|| this_log_index.cmp(&other_log_index))
-    }
-}
-
-/// Swap event data
-#[derive(Debug, Clone)]
-pub struct SwapEventData {
-    pub sender:         Address,
-    pub amount0:        i128,
-    pub amount1:        i128,
-    pub sqrt_price_x96: U160,
-    pub liquidity:      u128,
-    pub tick:           i32,
-    pub fee:            u32
-}
-
-/// Modify liquidity event data
-#[derive(Debug, Clone)]
-pub struct ModifyLiquidityEventData {
-    pub sender:          Address,
-    pub tick_lower:      i32,
-    pub tick_upper:      i32,
-    pub liquidity_delta: I256,
-    pub salt:            [u8; 32]
-}
-
-/// Current slot0 data for a pool
-#[derive(Debug, Clone)]
-pub struct Slot0Data {
-    pub sqrt_price_x96: U160,
-    pub tick:           i32,
-    pub liquidity:      u128
 }
 
 /// Stored event for reorg handling - only liquidity events need to be stored
@@ -352,14 +254,15 @@ where
                     .private_key_from_public(&angstrom_pool_id)
                     .unwrap();
 
-                updates.push(PoolUpdate::PoolConfigured {
-                    pool_key,
+                updates.push(PoolUpdate::NewPool {
                     pool_id,
-                    block: block_number,
+                    token0: pool_key.currency0,
+                    token1: pool_key.currency1,
                     bundle_fee: event.bundleFee.to(),
                     swap_fee: event.unlockedFee.to(),
                     protocol_fee: event.protocolUnlockedFee.to(),
-                    tick_spacing: event.tickSpacing as i32
+                    tick_spacing: event.tickSpacing as i32,
+                    block: block_number
                 });
             }
 
@@ -690,7 +593,7 @@ where
                 PoolUpdate::SwapEvent { pool_id, .. }
                 | PoolUpdate::LiquidityEvent { pool_id, .. }
                 | PoolUpdate::UpdatedSlot0 { pool_id, .. }
-                | PoolUpdate::PoolConfigured { pool_id, .. }
+                | PoolUpdate::NewPool { pool_id, .. }
                 | PoolUpdate::PoolRemoved { pool_id, .. }
                 | PoolUpdate::FeeUpdate { pool_id, .. } => {
                     affected_pools.insert(*pool_id);

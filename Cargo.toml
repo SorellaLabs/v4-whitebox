@@ -8,6 +8,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+uni-v4-common = { path = "crates/uni-v4-common" }
 uni-v4-structure = { path = "crates/uni-v4-structure" }
 uni-v4-upkeeper = { path = "crates/uni-v4-upkeeper" }
 
@@ -50,6 +51,7 @@ repository = "https://github.com/SorellaLabs/uni-v4"
 
 [workspace.dependencies]
 # Internal crates
+uni-v4-common = { path = "crates/uni-v4-common" }
 uni-v4-structure = { path = "crates/uni-v4-structure" }
 uni-v4-upkeeper = { path = "crates/uni-v4-upkeeper" }
 
