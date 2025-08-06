@@ -42,6 +42,23 @@ pub trait PoolUpdateDelivery: Send + Sync {
     /// Get a slot0 update (real-time price/liquidity/tick update)
     /// Returns: (pool_id, slot0_data)
     fn get_slot0_update(&mut self) -> Option<(PoolId, Slot0Data)>;
+
+    /// Get new ticks loaded for a pool
+    /// Returns: (pool_id, ticks, tick_bitmap)
+    fn get_new_ticks(
+        &mut self
+    ) -> Option<(
+        PoolId,
+        std::collections::HashMap<i32, uni_v4_structure::tick_info::TickInfo>,
+        std::collections::HashMap<i16, alloy::primitives::U256>
+    )>;
+
+    /// Get a new pool with full state
+    /// Returns: (pool_id, state)
+    fn get_new_pool_state(&mut self) -> Option<(PoolId, uni_v4_structure::BaselinePoolState)>;
+
+    /// Get a slot0 streaming update
+    fn get_slot0_stream_update(&mut self) -> Option<crate::updates::Slot0Update>;
 }
 
 /// Extension trait for PoolUpdateDelivery that provides a method to get the
@@ -109,6 +126,18 @@ pub trait PoolUpdateDeliveryExt: PoolUpdateDelivery {
 
         if let Some((pool_id, data)) = self.get_slot0_update() {
             return Some(crate::updates::PoolUpdate::UpdatedSlot0 { pool_id, data });
+        }
+
+        if let Some((pool_id, ticks, tick_bitmap)) = self.get_new_ticks() {
+            return Some(crate::updates::PoolUpdate::NewTicks { pool_id, ticks, tick_bitmap });
+        }
+
+        if let Some((pool_id, state)) = self.get_new_pool_state() {
+            return Some(crate::updates::PoolUpdate::NewPoolState { pool_id, state });
+        }
+
+        if let Some(update) = self.get_slot0_stream_update() {
+            return Some(crate::updates::PoolUpdate::Slot0Update(update));
         }
 
         None

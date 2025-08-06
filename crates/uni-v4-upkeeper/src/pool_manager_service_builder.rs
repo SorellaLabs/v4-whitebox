@@ -2,7 +2,8 @@ use std::{collections::HashSet, sync::Arc};
 
 use alloy::{primitives::Address, providers::Provider};
 use futures::Stream;
-use uni_v4_common::PoolId;
+use tokio::sync::mpsc;
+use uni_v4_common::{PoolId, PoolUpdate};
 
 use super::{
     pool_data_loader::DataLoader,
@@ -35,7 +36,8 @@ where
     current_block:              Option<u64>,
     ticks_per_batch:            Option<usize>,
     reorg_detection_blocks:     Option<u64>,
-    reorg_lookback_block_chunk: Option<u64>
+    reorg_lookback_block_chunk: Option<u64>,
+    update_channel:             Option<mpsc::Sender<PoolUpdate>>
 }
 
 impl<P, Event, Slot0> PoolManagerServiceBuilder<P, Event, Slot0>
@@ -67,7 +69,8 @@ where
             current_block: None,
             ticks_per_batch: None,
             reorg_detection_blocks: None,
-            reorg_lookback_block_chunk: None
+            reorg_lookback_block_chunk: None,
+            update_channel: None
         }
     }
 }
@@ -124,6 +127,14 @@ where
         self
     }
 
+    /// Set the channel for sending pool updates
+    /// When set, the service will send all updates via this channel instead of
+    /// applying them directly
+    pub fn with_update_channel(mut self, sender: mpsc::Sender<PoolUpdate>) -> Self {
+        self.update_channel = Some(sender);
+        self
+    }
+
     /// Set the slot0 update stream
     pub fn with_slot0_stream<NewS: Slot0Stream + 'static>(
         self,
@@ -144,7 +155,8 @@ where
             current_block:              self.current_block,
             ticks_per_batch:            self.ticks_per_batch,
             reorg_detection_blocks:     self.reorg_detection_blocks,
-            reorg_lookback_block_chunk: self.reorg_lookback_block_chunk
+            reorg_lookback_block_chunk: self.reorg_lookback_block_chunk,
+            update_channel:             self.update_channel
         }
     }
 
@@ -172,7 +184,8 @@ where
             self.auto_pool_creation,
             self.slot0_stream,
             self.current_block,
-            self.ticks_per_batch
+            self.ticks_per_batch,
+            self.update_channel
         )
         .await?;
 

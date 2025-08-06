@@ -13,6 +13,14 @@ path = "pool_manager_with_slot0_stream.rs"
 name = "pool_manager_without_slot0_stream"
 path = "pool_manager_without_slot0_stream.rs"
 
+[[bin]]
+name = "pool_manager_with_channel"
+path = "pool_manager_with_channel.rs"
+
+[[bin]]
+name = "test_channel_mode"
+path = "test_channel_mode.rs"
+
 [dependencies]
 # Internal dependencies
 uni-v4-common.workspace = true

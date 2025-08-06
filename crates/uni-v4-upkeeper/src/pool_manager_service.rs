@@ -8,6 +8,7 @@ use std::{
 use alloy::{primitives::Address, providers::Provider};
 use futures::{Future, Stream, StreamExt};
 use thiserror::Error;
+use tokio::sync::mpsc;
 use uni_v4_common::{PoolId, PoolUpdate, Slot0Update, UniswapPools};
 use uni_v4_structure::BaselinePoolState;
 
@@ -55,7 +56,9 @@ where
     pub(crate) slot0_stream:       Option<S>,
     // If we are loading more ticks at a block, we will queue up updates messages here
     // so that we don't hit any race conditions.
-    pending_updates:               Vec<PoolUpdate>
+    pending_updates:               Vec<PoolUpdate>,
+    // Channel for sending updates instead of applying them directly
+    update_sender:                 Option<mpsc::Sender<PoolUpdate>>
 }
 
 impl<P, Event, S> PoolManagerService<P, Event, S>
@@ -80,7 +83,8 @@ where
         auto_pool_creation: bool,
         slot0_stream: Option<S>,
         current_block: Option<u64>,
-        ticks_per_batch: Option<usize>
+        ticks_per_batch: Option<usize>,
+        update_channel: Option<mpsc::Sender<PoolUpdate>>
     ) -> Result<Self, PoolManagerServiceError> {
         // Set the controller address for the fetch_pool_keys module
         set_controller_address(controller_address);
@@ -113,7 +117,8 @@ where
             current_block: deploy_block,
             auto_pool_creation,
             slot0_stream,
-            pending_updates: Vec::new()
+            pending_updates: Vec::new(),
+            update_sender: update_channel
         };
 
         service
@@ -166,6 +171,28 @@ where
             swap_fee,
             protocol_fee
         );
+    }
+
+    /// Dispatch an update either via channel or apply directly
+    fn dispatch_update(&mut self, update: PoolUpdate) {
+        if let Some(sender) = &self.update_sender {
+            // Channel mode: send the update
+            if let Err(e) = sender.try_send(update) {
+                tracing::error!("Failed to send update via channel: {}", e);
+            }
+        } else {
+            // Direct mode: apply the update
+            match &update {
+                PoolUpdate::NewBlock(block) => {
+                    self.current_block = *block;
+                }
+                _ => {
+                    // Let update_pools handle all other updates
+                    self.pools.update_pools(vec![update.clone()]);
+                    self.process_pool_update(update);
+                }
+            }
+        }
     }
 
     pub fn slot0_update(&self, update: Slot0Update) {
@@ -266,6 +293,27 @@ where
             PoolUpdate::Reorg { from_block, to_block } => {
                 tracing::warn!("Reorg detected from block {} to {}", from_block, to_block);
             }
+            PoolUpdate::NewPoolState { pool_id, state: _ } => {
+                // This comes from the factory - just track the pool
+                self.event_stream.start_tracking_pool(*pool_id);
+
+                // Subscribe new pool to slot0 stream (using angstrom ID)
+                if let Some(slot0_stream) = &mut self.slot0_stream
+                    && let Some(angstrom_pool_id) =
+                        self.factory.registry().public_key_from_private(pool_id)
+                {
+                    slot0_stream.subscribe_pools(HashSet::from([angstrom_pool_id]));
+                }
+
+                tracing::info!("Tracking new pool from factory: {:?}", pool_id);
+            }
+            PoolUpdate::NewTicks { .. } => {
+                // These are handled by update_pools
+                tracing::debug!("NewTicks update will be handled by update_pools");
+            }
+            PoolUpdate::Slot0Update(update) => {
+                self.slot0_update(update.clone());
+            }
         }
     }
 }
@@ -284,46 +332,16 @@ where
         let this = self.get_mut();
         match this.factory.poll_next_unpin(cx) {
             Poll::Ready(Some(update)) => {
-                // Process the update
-                match update {
+                // Convert factory update to PoolUpdate and dispatch
+                let pool_update = match update {
                     UpdateMessage::NewTicks(pool_id, ticks, tick_bitmap) => {
-                        // Update the pool's tick data
-                        if let Some(mut pool) = this.pools.get_pools().get_mut(&pool_id) {
-                            let baseline = pool.get_baseline_liquidity_mut();
-
-                            // Merge new ticks with existing ones
-                            baseline.initialized_ticks_mut().extend(ticks);
-
-                            // Update tick bitmap
-                            for (word_pos, word) in tick_bitmap {
-                                baseline.update_tick_bitmap(word_pos, word);
-                            }
-
-                            tracing::info!(
-                                "Updated ticks for pool {:?}, total ticks: {}",
-                                pool_id,
-                                baseline.initialized_ticks_mut().len()
-                            );
-                        } else {
-                            tracing::warn!("Received tick update for unknown pool: {:?}", pool_id);
-                        }
+                        PoolUpdate::NewTicks { pool_id, ticks, tick_bitmap }
                     }
-                    UpdateMessage::NewPool(pool_id, pool_state) => {
-                        // Add new pool to the pools map
-                        this.pools.insert(pool_id, pool_state.clone());
-                        this.event_stream.start_tracking_pool(pool_id);
-
-                        // Subscribe new pool to slot0 stream (using angstrom ID)
-                        if let Some(slot0_stream) = &mut this.slot0_stream
-                            && let Some(angstrom_pool_id) =
-                                this.factory.registry().public_key_from_private(&pool_id)
-                        {
-                            slot0_stream.subscribe_pools(HashSet::from([angstrom_pool_id]));
-                        }
-
-                        tracing::info!("Added new pool: {:?}", pool_id);
+                    UpdateMessage::NewPool(pool_id, state) => {
+                        PoolUpdate::NewPoolState { pool_id, state }
                     }
-                }
+                };
+                this.dispatch_update(pool_update);
             }
             Poll::Ready(None) => {
                 // Stream ended, which shouldn't happen in our case.
@@ -334,33 +352,19 @@ where
 
         if !this.factory.is_processing() {
             let updates = this.pending_updates.drain(..).collect::<Vec<_>>();
-            this.pools.update_pools(updates.clone());
-            for event in updates {
-                this.process_pool_update(event);
-            }
 
-            // Check tick ranges for all pools after updates
-            for entry in this.pools.get_pools().iter() {
-                this.factory.check_and_request_ticks_if_needed(
-                    *entry.key(),
-                    entry.value(),
-                    Some(this.current_block)
-                );
-            }
-        }
-
-        while let Poll::Ready(events) = this.event_stream.poll_next_unpin(cx) {
-            if let Some(events) = events {
-                if this.factory.is_processing() {
-                    this.pending_updates.extend(events);
-
-                    continue;
+            if this.update_sender.is_some() {
+                // Channel mode: dispatch each update
+                for event in updates {
+                    this.dispatch_update(event);
                 }
-
-                this.pools.update_pools(events.clone());
-                for event in events {
+            } else {
+                // Direct mode: apply updates and check tick ranges
+                this.pools.update_pools(updates.clone());
+                for event in updates {
                     this.process_pool_update(event);
                 }
+
                 // Check tick ranges for all pools after updates
                 for entry in this.pools.get_pools().iter() {
                     this.factory.check_and_request_ticks_if_needed(
@@ -369,23 +373,50 @@ where
                         Some(this.current_block)
                     );
                 }
+            }
+        }
+
+        while let Poll::Ready(events) = this.event_stream.poll_next_unpin(cx) {
+            if let Some(events) = events {
+                if this.factory.is_processing() {
+                    this.pending_updates.extend(events);
+                    continue;
+                }
+
+                if this.update_sender.is_some() {
+                    // Channel mode: dispatch each update
+                    for event in events {
+                        this.dispatch_update(event);
+                    }
+                } else {
+                    // Direct mode: apply updates and check tick ranges
+                    this.pools.update_pools(events.clone());
+                    for event in events {
+                        this.process_pool_update(event);
+                    }
+                    // Check tick ranges for all pools after updates
+                    for entry in this.pools.get_pools().iter() {
+                        this.factory.check_and_request_ticks_if_needed(
+                            *entry.key(),
+                            entry.value(),
+                            Some(this.current_block)
+                        );
+                    }
+                }
             } else {
                 return Poll::Ready(());
             }
         }
 
-        let updates = if let Some(slot0_stream) = this.slot0_stream.as_mut() {
-            let mut updates = vec![];
+        if let Some(slot0_stream) = this.slot0_stream.as_mut() {
+            let mut slot0_updates = Vec::new();
             while let Poll::Ready(Some(update)) = slot0_stream.poll_next_unpin(cx) {
-                updates.push(update);
+                slot0_updates.push(update);
             }
-            updates
-        } else {
-            vec![]
-        };
-
-        for update in updates {
-            this.slot0_update(update);
+            for update in slot0_updates {
+                let pool_update = PoolUpdate::Slot0Update(update);
+                this.dispatch_update(pool_update);
+            }
         }
 
         Poll::Pending

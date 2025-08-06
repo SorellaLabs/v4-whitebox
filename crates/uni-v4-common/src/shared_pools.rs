@@ -118,6 +118,35 @@ impl UniswapPools {
                     let state = pool.value_mut();
                     state.update_slot0(data.tick, data.sqrt_price_x96.into(), data.liquidity);
                 }
+                PoolUpdate::NewTicks { pool_id, ticks, tick_bitmap } => {
+                    let Some(mut pool) = self.pools.get_mut(&pool_id) else {
+                        continue;
+                    };
+
+                    let baseline = pool.value_mut().get_baseline_liquidity_mut();
+
+                    // Merge new ticks with existing ones
+                    baseline.initialized_ticks_mut().extend(ticks);
+
+                    // Update tick bitmap
+                    for (word_pos, word) in tick_bitmap {
+                        baseline.update_tick_bitmap(word_pos, word);
+                    }
+                }
+                PoolUpdate::NewPoolState { pool_id, state } => {
+                    self.pools.insert(pool_id, state);
+                }
+                PoolUpdate::Slot0Update(update) => {
+                    let Some(mut pool) = self.pools.get_mut(&update.angstrom_pool_id) else {
+                        continue;
+                    };
+
+                    pool.value_mut().update_slot0(
+                        update.tick,
+                        update.sqrt_price_x96.into(),
+                        update.liquidity
+                    );
+                }
                 _ => {}
             }
         }

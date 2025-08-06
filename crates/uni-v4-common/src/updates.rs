@@ -1,7 +1,8 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::HashMap};
 
-use alloy_primitives::{Address, I256, U160};
+use alloy_primitives::{Address, I256, U160, U256};
 use serde::{Deserialize, Serialize};
+use uni_v4_structure::{BaselinePoolState, tick_info::TickInfo};
 
 use crate::pools::PoolId;
 
@@ -50,7 +51,21 @@ pub enum PoolUpdate {
     /// Reorg detected
     Reorg { from_block: u64, to_block: u64 },
     /// Updated slot0 data after reorg
-    UpdatedSlot0 { pool_id: PoolId, data: Slot0Data }
+    UpdatedSlot0 { pool_id: PoolId, data: Slot0Data },
+
+    // From factory
+    /// New ticks loaded for a pool
+    NewTicks {
+        pool_id:     PoolId,
+        ticks:       HashMap<i32, TickInfo>,
+        tick_bitmap: HashMap<i16, U256>
+    },
+    /// New pool with full state from factory
+    NewPoolState { pool_id: PoolId, state: BaselinePoolState },
+
+    // From slot0 stream
+    /// Real-time slot0 update
+    Slot0Update(Slot0Update)
 }
 
 impl PoolUpdate {
@@ -330,6 +345,48 @@ impl PoolUpdateDelivery for PoolUpdateQueue {
                 let data = data.clone();
                 self.updates.pop_front();
                 Some((pool_id, data))
+            }
+            _ => None
+        }
+    }
+
+    fn get_new_ticks(
+        &mut self
+    ) -> Option<(
+        PoolId,
+        std::collections::HashMap<i32, uni_v4_structure::tick_info::TickInfo>,
+        std::collections::HashMap<i16, alloy::primitives::U256>
+    )> {
+        match self.updates.front() {
+            Some(PoolUpdate::NewTicks { pool_id, ticks, tick_bitmap }) => {
+                let pool_id = *pool_id;
+                let ticks = ticks.clone();
+                let tick_bitmap = tick_bitmap.clone();
+                self.updates.pop_front();
+                Some((pool_id, ticks, tick_bitmap))
+            }
+            _ => None
+        }
+    }
+
+    fn get_new_pool_state(&mut self) -> Option<(PoolId, uni_v4_structure::BaselinePoolState)> {
+        match self.updates.front() {
+            Some(PoolUpdate::NewPoolState { pool_id, state }) => {
+                let pool_id = *pool_id;
+                let state = state.clone();
+                self.updates.pop_front();
+                Some((pool_id, state))
+            }
+            _ => None
+        }
+    }
+
+    fn get_slot0_stream_update(&mut self) -> Option<Slot0Update> {
+        match self.updates.front() {
+            Some(PoolUpdate::Slot0Update(update)) => {
+                let update = update.clone();
+                self.updates.pop_front();
+                Some(update)
             }
             _ => None
         }

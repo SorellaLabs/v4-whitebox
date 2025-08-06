@@ -4275,6 +4275,7 @@ dependencies = [
  "jsonrpsee",
  "serde",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
  "uni-v4-common",
  "uni-v4-structure",
