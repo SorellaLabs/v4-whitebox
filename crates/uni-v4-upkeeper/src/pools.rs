@@ -7,10 +7,11 @@ use alloy_primitives::{B256, FixedBytes};
 use dashmap::{DashMap, mapref::one::Ref};
 use thiserror::Error;
 use tokio::sync::{Notify, futures::Notified};
+use uni_v4_structure::BaselinePoolState;
 use uniswap_v3_math::error::UniswapV3MathError;
 
 use super::ConversionError;
-use crate::{BaselinePoolState, pool_providers::pool_update_provider::PoolUpdate};
+use crate::pool_providers::pool_update_provider::PoolUpdate;
 
 #[derive(Clone)]
 pub struct UniswapPools {

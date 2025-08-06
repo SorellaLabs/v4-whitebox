@@ -4,9 +4,9 @@ use convert_case::{Case, Casing};
 use itertools::Itertools;
 
 const CONTRACT_LOCATION: &str = "contracts/";
-const OUT_DIRECTORY: &str = "contracts/out/";
+const OUT_DIRECTORY: &str = "abi-v4/";
 const SRC_DIRECTORY: &str = "contracts/src/";
-const BINDINGS_PATH: &str = "/src/uniswap/loaders/mod.rs";
+const BINDINGS_PATH: &str = "/src/loaders/mod.rs";
 
 const WANTED_CONTRACTS: [&str; 2] = ["GetUniswapV4PoolData.sol", "GetUniswapV4TickData.sol"];
 
@@ -32,41 +32,35 @@ fn main() {
     let mut out_dir = base_dir.clone();
     out_dir.push(OUT_DIRECTORY);
 
-    // Try to find forge in common locations
-    let forge_paths = [
-        "forge" // Check PATH first
-    ];
-
-    let mut forge_cmd = None;
-    for path in &forge_paths {
-        if Command::new(path).arg("--version").output().is_ok() {
-            forge_cmd = Some(path);
-            break;
-        }
-    }
-
-    let forge_path = forge_cmd.unwrap_or_else(|| {
-        eprintln!("Error: Foundry (forge) is not installed or not found in PATH.");
-        eprintln!(
-            "Please install Foundry from: https://book.getfoundry.sh/getting-started/installation"
-        );
-        eprintln!("Or run: curl -L https://foundry.paradigm.xyz | bash && foundryup");
-        panic!("Foundry is required to compile Solidity contracts");
-    });
-
-    let res = Command::new(forge_path)
-        .arg("build")
-        .arg("--optimize")
+    let Ok(mut res) = Command::new("forge")
+        .arg("bind")
+        .arg("--out")
+        .arg(format!("../{OUT_DIRECTORY}"))
         .arg("--optimizer-runs")
         .arg("9999999999")
         .current_dir(contract_dir)
         .spawn()
-        .expect("Failed to execute forge")
-        .wait()
-        .unwrap();
+    else {
+        println!("didn't update binding because foundry isn't installed");
+
+        return;
+    };
+    let res = res.wait().unwrap();
+
+    std::fs::read_dir(&out_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_str().unwrap();
+            !WANTED_CONTRACTS.contains(&file_name_str)
+        })
+        .for_each(|entry| {
+            let _ = std::fs::remove_dir_all(entry.path());
+        });
 
     if res.into_raw() != 0 {
-        panic!("foundry failed to build files");
+        return;
     }
 
     let sol_macro_invocation = std::fs::read_dir(out_dir)
@@ -85,6 +79,8 @@ fn main() {
         })
         .sorted_unstable_by_key(|key| key.0.clone())
         .map(|(name, path_of_contracts)| {
+            let path_of_contracts = path_of_contracts.replace(this_dir, "../..");
+
             let mod_name = name.clone().to_case(Case::Snake);
             format!(
                 r#"#[rustfmt::skip]
@@ -102,11 +98,12 @@ pub mod {mod_name} {{
         })
         .collect::<Vec<_>>();
 
+    let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let mut f = std::fs::File::options()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(format!("{this_dir}{BINDINGS_PATH}"))
+        .open(format!("{crate_dir}{BINDINGS_PATH}"))
         .unwrap();
 
     for contract_build in sol_macro_invocation {

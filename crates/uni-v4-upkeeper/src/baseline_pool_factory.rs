@@ -13,15 +13,14 @@ use alloy::{
 use dashmap::DashMap;
 use futures::{Stream, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use thiserror::Error;
+use uni_v4_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo};
 
 use super::{
     pool_data_loader::{DataLoader, PoolDataLoader, TickData},
     pools::PoolId
 };
 use crate::{
-    fetch_pool_keys::fetch_angstrom_pools,
-    uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo},
-    uniswap::{pool_key::PoolKey, pool_registry::UniswapPoolRegistry}
+    fetch_pool_keys::fetch_angstrom_pools, pool_key::PoolKey, pool_registry::UniswapPoolRegistry
 };
 
 pub const INITIAL_TICKS_PER_SIDE: u16 = 300;
@@ -234,8 +233,7 @@ where
         );
 
         // Create fee configuration with provided values
-        let fee_config =
-            crate::uni_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
+        let fee_config = uni_v4_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
 
         // Create and return BaselinePoolState
         Ok(BaselinePoolState::new(
@@ -779,7 +777,7 @@ where
 
             // Create fee configuration with provided values
             let fee_config =
-                crate::uni_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
+                uni_v4_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
 
             // Create and return BaselinePoolState with Uniswap pool_id
             Ok((

@@ -195,7 +195,7 @@ impl Default for NoOpEventStream {
 }
 
 impl Stream for NoOpEventStream {
-    type Item = Vec<crate::uniswap::pool_providers::pool_update_provider::PoolUpdate>;
+    type Item = Vec<crate::pool_providers::pool_update_provider::PoolUpdate>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,

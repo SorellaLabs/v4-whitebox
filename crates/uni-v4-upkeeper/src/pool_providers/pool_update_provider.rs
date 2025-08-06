@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashSet, VecDeque},
+    future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll}
@@ -18,13 +19,11 @@ use futures::{FutureExt, StreamExt, stream::Stream};
 use thiserror::Error;
 
 use crate::{
+    pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
+    pool_key::PoolKey,
     pool_providers::PoolEventStream,
-    uniswap::{
-        pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
-        pool_key::PoolKey,
-        pool_registry::UniswapPoolRegistry,
-        pools::PoolId
-    }
+    pool_registry::UniswapPoolRegistry,
+    pools::PoolId
 };
 
 /// Number of blocks to keep in history for reorg detection

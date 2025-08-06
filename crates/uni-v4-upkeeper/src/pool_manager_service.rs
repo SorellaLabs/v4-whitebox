@@ -8,6 +8,7 @@ use std::{
 use alloy::{primitives::Address, providers::Provider};
 use futures::{Future, Stream, StreamExt};
 use thiserror::Error;
+use uni_v4_structure::BaselinePoolState;
 
 use super::{
     baseline_pool_factory::{BaselinePoolFactory, BaselinePoolFactoryError, UpdateMessage},
@@ -16,13 +17,9 @@ use super::{
     pools::PoolId
 };
 use crate::{
-    pool_providers::PoolEventStream,
+    pool_providers::{PoolEventStream, pool_update_provider::PoolUpdate},
     pools::UniswapPools,
-    uni_structure::BaselinePoolState,
-    uniswap::{
-        pool_providers::pool_update_provider::PoolUpdate,
-        slot0::{Slot0Stream, Slot0Update}
-    }
+    slot0::{Slot0Stream, Slot0Update}
 };
 
 /// Pool information combining BaselinePoolState with token metadata

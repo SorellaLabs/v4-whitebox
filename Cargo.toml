@@ -1,9 +1,59 @@
+[workspace]
+members = [".", "crates/*", "examples"]
+resolver = "2"
+
 [package]
 name = "angstrom-v4"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
+uni-v4-structure = { path = "crates/uni-v4-structure" }
+uni-v4-upkeeper = { path = "crates/uni-v4-upkeeper" }
+
+# Re-export all the dependencies that downstream users might need
+alloy.workspace = true
+alloy-primitives.workspace = true
+jsonrpsee.workspace = true
+arraydeque.workspace = true
+auto_impl.workspace = true
+base64.workspace = true
+dashmap.workspace = true
+eyre.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+itertools.workspace = true
+malachite.workspace = true
+malachite-q.workspace = true
+pade.workspace = true
+pade-macro.workspace = true
+rand.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uniswap_v3_math.workspace = true
+
+[features]
+default = []
+integration = []
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Sorella Labs"]
+repository = "https://github.com/SorellaLabs/uni-v4"
+
+[workspace.dependencies]
+# Internal crates
+uni-v4-structure = { path = "crates/uni-v4-structure" }
+uni-v4-upkeeper = { path = "crates/uni-v4-upkeeper" }
+
+# External dependencies
 alloy = { version = "1.0.13", features = [
   "rlp",
   "full",
@@ -21,6 +71,7 @@ alloy-primitives = { version = "1.2.0", default-features = false, features = [
 ] }
 jsonrpsee = { version = "0.25.1", features = ["ws-client", "macros"] }
 arraydeque = "0"
+async-trait = "0.1"
 auto_impl = "1"
 base64 = "0.22"
 dashmap = { version = "6", features = ["serde"] }
@@ -45,16 +96,3 @@ tokio = { version = "^1.44.2", features = [
 tracing = "0"
 tracing-subscriber = "0.3.19"
 uniswap_v3_math = { git = "https://github.com/SorellaLabs/v3-math", branch = "main" }
-
-[dev-dependencies]
-tokio-test = "0.4"
-mockall = "0.12"
-serial_test = "3.0"
-
-[features]
-default = []
-integration = []
-
-[build-dependencies]
-convert_case = "0"
-itertools = "0"

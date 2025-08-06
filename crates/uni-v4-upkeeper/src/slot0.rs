@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker}
