@@ -81,6 +81,7 @@ async fn main() -> eyre::Result<()> {
     );
     let event_stream = StateStream::new(update_provider, block_stream);
     // Build service with event stream but without slot0 stream
+    println!("🔧 Configuring pool manager with custom settings...");
     let service = PoolManagerServiceBuilder::<_, _, NoOpSlot0Stream>::new(
         provider.clone(),
         angstrom_address,
@@ -89,7 +90,11 @@ async fn main() -> eyre::Result<()> {
         deploy_block,
         event_stream
     )
-    .with_initial_tick_range_size(100) // Custom tick range
+    .with_initial_tick_range_size(100) // Custom tick range (default: 300)
+    .with_tick_edge_threshold(50) // When to load more ticks (default: 100)
+    .with_ticks_per_batch(20) // Ticks loaded per batch (default: 10)
+    .with_reorg_detection_blocks(15) // Blocks to keep for reorg detection (default: 10)
+    .with_reorg_lookback_block_chunk(150) // Chunk size for reorg lookback (default: 100)
     .build()
     .await?;
 

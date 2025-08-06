@@ -25,8 +25,11 @@ use crate::{
     pool_registry::UniswapPoolRegistry
 };
 
-/// Number of blocks to keep in history for reorg detection
-const REORG_DETECTION_BLOCKS: u64 = 10;
+/// Default number of blocks to keep in history for reorg detection
+const DEFAULT_REORG_DETECTION_BLOCKS: u64 = 10;
+
+/// Default chunk size for block processing
+const DEFAULT_REORG_LOOKBACK_BLOCK_CHUNK: u64 = 100;
 
 alloy::sol! {
     #[derive(Debug, PartialEq, Eq)]
@@ -82,14 +85,16 @@ pub struct PoolUpdateProvider<P>
 where
     P: Provider + 'static
 {
-    provider:           Arc<P>,
-    pool_manager:       Address,
-    controller_address: Address,
-    angstrom_address:   Address,
-    pool_registry:      UniswapPoolRegistry,
-    tracked_pools:      HashSet<PoolId>,
-    event_history:      VecDeque<StoredEvent>,
-    current_block:      u64
+    provider:                   Arc<P>,
+    pool_manager:               Address,
+    controller_address:         Address,
+    angstrom_address:           Address,
+    pool_registry:              UniswapPoolRegistry,
+    tracked_pools:              HashSet<PoolId>,
+    event_history:              VecDeque<StoredEvent>,
+    current_block:              u64,
+    reorg_detection_blocks:     u64,
+    reorg_lookback_block_chunk: u64
 }
 
 impl<P> PoolUpdateProvider<P>
@@ -130,6 +135,29 @@ where
         pool_registry: UniswapPoolRegistry,
         current_block: u64
     ) -> Self {
+        Self::new_with_config(
+            provider,
+            pool_manager,
+            controller_address,
+            angstrom_address,
+            pool_registry,
+            current_block,
+            DEFAULT_REORG_DETECTION_BLOCKS,
+            DEFAULT_REORG_LOOKBACK_BLOCK_CHUNK
+        )
+    }
+
+    /// Create a new pool update provider with custom configuration
+    pub fn new_with_config(
+        provider: Arc<P>,
+        pool_manager: Address,
+        controller_address: Address,
+        angstrom_address: Address,
+        pool_registry: UniswapPoolRegistry,
+        current_block: u64,
+        reorg_detection_blocks: u64,
+        reorg_lookback_block_chunk: u64
+    ) -> Self {
         Self {
             provider,
             pool_manager,
@@ -137,8 +165,10 @@ where
             angstrom_address,
             pool_registry,
             tracked_pools: HashSet::new(),
-            event_history: VecDeque::with_capacity(REORG_DETECTION_BLOCKS as usize),
-            current_block
+            event_history: VecDeque::with_capacity(reorg_detection_blocks as usize),
+            current_block,
+            reorg_detection_blocks,
+            reorg_lookback_block_chunk
         }
     }
 
@@ -474,11 +504,11 @@ where
     fn add_to_history(&mut self, event: StoredEvent) {
         self.event_history.push_back(event);
 
-        // Maintain exactly REORG_DETECTION_BLOCKS worth of history
+        // Maintain exactly reorg_detection_blocks worth of history
         // Remove all events from blocks that are too old
         let cutoff_block = self
             .current_block
-            .saturating_sub(REORG_DETECTION_BLOCKS - 1);
+            .saturating_sub(self.reorg_detection_blocks - 1);
 
         // Remove all events from blocks older than cutoff
         self.event_history.retain(|e| e.block >= cutoff_block);
@@ -535,11 +565,10 @@ where
         let mut all_updates = Vec::new();
 
         // Process blocks in chunks to avoid overwhelming the provider
-        const CHUNK_SIZE: u64 = 100;
         let mut current = from_block;
 
         while current <= to_block {
-            let end = (current + CHUNK_SIZE - 1).min(to_block);
+            let end = (current + self.reorg_lookback_block_chunk - 1).min(to_block);
 
             // Use the shared helper with store_in_history = false for backfilling
             let chunk_updates = self
@@ -615,7 +644,7 @@ where
         let mut updates = Vec::new();
         let reorg_start = self
             .current_block
-            .saturating_sub(REORG_DETECTION_BLOCKS - 1);
+            .saturating_sub(self.reorg_detection_blocks - 1);
 
         // 1. First, emit the reorg event so the pipeline knows a reorg is happening
         updates.push(PoolUpdate::Reorg { from_block: reorg_start, to_block: self.current_block });
@@ -685,10 +714,10 @@ where
             // Update current block
             self.current_block = block_number;
 
-            // Clean up old events from history to maintain exactly 10 blocks
+            // Clean up old events from history to maintain exactly reorg_detection_blocks
             let cutoff_block = self
                 .current_block
-                .saturating_sub(REORG_DETECTION_BLOCKS - 1);
+                .saturating_sub(self.reorg_detection_blocks - 1);
             self.event_history.retain(|e| e.block >= cutoff_block);
         } else if block_number < self.current_block {
             // Block is behind our current block, this shouldn't happen in normal operation

@@ -96,6 +96,11 @@ async fn main() -> eyre::Result<()> {
         event_stream
     )
     .with_slot0_stream(slot0_client)
+    .with_initial_tick_range_size(300) // Standard tick range
+    .with_tick_edge_threshold(100) // Standard threshold
+    .with_ticks_per_batch(10) // Standard batch size
+    .with_reorg_detection_blocks(10) // Standard reorg detection
+    .with_reorg_lookback_block_chunk(100) // Standard chunk size
     .build()
     .await?;
 

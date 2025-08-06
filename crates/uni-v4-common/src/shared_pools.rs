@@ -10,7 +10,10 @@ use tokio::sync::{Notify, futures::Notified};
 use uni_v4_structure::BaselinePoolState;
 use uniswap_v3_math::error::UniswapV3MathError;
 
-use crate::updates::PoolUpdate;
+use crate::{
+    traits::{PoolUpdateDelivery, PoolUpdateDeliveryExt},
+    updates::PoolUpdate
+};
 
 #[derive(Clone)]
 pub struct UniswapPools {
@@ -130,6 +133,32 @@ impl UniswapPools {
             .store(new_block_number, std::sync::atomic::Ordering::SeqCst);
 
         self.notifier.notify_waiters();
+    }
+
+    /// Update pools using a PoolUpdateDelivery source
+    /// Processes all available updates from the source
+    pub fn update_from_source<T: PoolUpdateDelivery>(&self, source: &mut T) {
+        let mut updates = Vec::new();
+
+        // Collect all available updates using the extension trait
+        while let Some(update) = source.next_update() {
+            updates.push(update);
+        }
+
+        // Process them using the existing method
+        self.update_pools(updates);
+    }
+
+    /// Update pools by processing a single update from a PoolUpdateDelivery
+    /// source Returns true if an update was processed, false if no updates
+    /// were available
+    pub fn update_single_from_source<T: PoolUpdateDelivery>(&self, source: &mut T) -> bool {
+        if let Some(update) = source.next_update() {
+            self.update_pools(vec![update]);
+            true
+        } else {
+            false
+        }
     }
 }
 

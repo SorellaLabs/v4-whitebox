@@ -79,7 +79,8 @@ where
         filter_pool_keys: Option<HashSet<PoolKey>>,
         auto_pool_creation: bool,
         slot0_stream: Option<S>,
-        current_block: Option<u64>
+        current_block: Option<u64>,
+        ticks_per_batch: Option<usize>
     ) -> Result<Self, PoolManagerServiceError> {
         // Set the controller address for the fetch_pool_keys module
         set_controller_address(controller_address);
@@ -100,7 +101,8 @@ where
             pool_manager_address,
             tick_band,
             tick_edge_threshold,
-            filter_pool_keys
+            filter_pool_keys,
+            ticks_per_batch
         )
         .await;
 

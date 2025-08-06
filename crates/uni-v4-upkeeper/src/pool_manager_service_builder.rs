@@ -27,12 +27,15 @@ where
     event_stream:         Event,
 
     // Optional fields with defaults
-    initial_tick_range_size: Option<u16>,
-    tick_edge_threshold:     Option<u16>,
-    fixed_pools:             Option<HashSet<PoolKey>>,
-    auto_pool_creation:      bool,
-    slot0_stream:            Option<S>,
-    current_block:           Option<u64>
+    initial_tick_range_size:    Option<u16>,
+    tick_edge_threshold:        Option<u16>,
+    fixed_pools:                Option<HashSet<PoolKey>>,
+    auto_pool_creation:         bool,
+    slot0_stream:               Option<S>,
+    current_block:              Option<u64>,
+    ticks_per_batch:            Option<usize>,
+    reorg_detection_blocks:     Option<u64>,
+    reorg_lookback_block_chunk: Option<u64>
 }
 
 impl<P, Event, Slot0> PoolManagerServiceBuilder<P, Event, Slot0>
@@ -61,7 +64,10 @@ where
             fixed_pools: None,
             auto_pool_creation: true,
             slot0_stream: None,
-            current_block: None
+            current_block: None,
+            ticks_per_batch: None,
+            reorg_detection_blocks: None,
+            reorg_lookback_block_chunk: None
         }
     }
 }
@@ -100,24 +106,45 @@ where
         self
     }
 
+    /// Set the number of ticks to load per batch
+    pub fn with_ticks_per_batch(mut self, ticks_per_batch: usize) -> Self {
+        self.ticks_per_batch = Some(ticks_per_batch);
+        self
+    }
+
+    /// Set the number of blocks to keep for reorg detection
+    pub fn with_reorg_detection_blocks(mut self, blocks: u64) -> Self {
+        self.reorg_detection_blocks = Some(blocks);
+        self
+    }
+
+    /// Set the chunk size for reorg lookback
+    pub fn with_reorg_lookback_block_chunk(mut self, chunk_size: u64) -> Self {
+        self.reorg_lookback_block_chunk = Some(chunk_size);
+        self
+    }
+
     /// Set the slot0 update stream
     pub fn with_slot0_stream<NewS: Slot0Stream + 'static>(
         self,
         stream: NewS
     ) -> PoolManagerServiceBuilder<P, Event, NewS> {
         PoolManagerServiceBuilder {
-            provider:                self.provider,
-            angstrom_address:        self.angstrom_address,
-            controller_address:      self.controller_address,
-            pool_manager_address:    self.pool_manager_address,
-            deploy_block:            self.deploy_block,
-            event_stream:            self.event_stream,
-            initial_tick_range_size: self.initial_tick_range_size,
-            tick_edge_threshold:     self.tick_edge_threshold,
-            fixed_pools:             self.fixed_pools,
-            auto_pool_creation:      self.auto_pool_creation,
-            slot0_stream:            Some(stream),
-            current_block:           self.current_block
+            provider:                   self.provider,
+            angstrom_address:           self.angstrom_address,
+            controller_address:         self.controller_address,
+            pool_manager_address:       self.pool_manager_address,
+            deploy_block:               self.deploy_block,
+            event_stream:               self.event_stream,
+            initial_tick_range_size:    self.initial_tick_range_size,
+            tick_edge_threshold:        self.tick_edge_threshold,
+            fixed_pools:                self.fixed_pools,
+            auto_pool_creation:         self.auto_pool_creation,
+            slot0_stream:               Some(stream),
+            current_block:              self.current_block,
+            ticks_per_batch:            self.ticks_per_batch,
+            reorg_detection_blocks:     self.reorg_detection_blocks,
+            reorg_lookback_block_chunk: self.reorg_lookback_block_chunk
         }
     }
 
@@ -144,7 +171,8 @@ where
             self.fixed_pools,
             self.auto_pool_creation,
             self.slot0_stream,
-            self.current_block
+            self.current_block,
+            self.ticks_per_batch
         )
         .await?;
 
