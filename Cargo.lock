@@ -835,32 +835,15 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "alloy-primitives",
- "arraydeque",
- "auto_impl",
- "base64",
- "dashmap",
  "eyre",
  "futures",
- "futures-util",
- "hex",
- "itertools 0.14.0",
  "jsonrpsee",
- "malachite",
- "malachite-q",
- "pade",
- "pade-macro",
- "rand 0.9.2",
- "rayon",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "uni-v4-common",
  "uni-v4-structure",
  "uni-v4-upkeeper",
- "uniswap_v3_math",
 ]
 
 [[package]]
@@ -986,12 +969,6 @@ dependencies = [
  "num-traits",
  "rand 0.8.5",
 ]
-
-[[package]]
-name = "arraydeque"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "arrayvec"
@@ -1355,25 +1332,6 @@ name = "crc-catalog"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
-
-[[package]]
-name = "crossbeam-deque"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
-dependencies = [
- "crossbeam-epoch",
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-epoch"
-version = "0.9.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
-dependencies = [
- "crossbeam-utils",
-]
 
 [[package]]
 name = "crossbeam-utils"
@@ -1848,10 +1806,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "335ff9f135e4384c8150d6f27c6daed433577f86b4750418338c01a1a2528592"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -2786,31 +2742,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
-name = "pade"
-version = "0.1.0"
-source = "git+https://github.com/SorellaLabs/pade.git?branch=main#f4b0f250df24cbb739dddcb9ad505492acb7f39d"
-dependencies = [
- "alloy",
- "alloy-sol-types",
- "bitvec",
- "bytes",
- "getrandom 0.2.16",
- "pade-macro",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "pade-macro"
-version = "0.1.0"
-source = "git+https://github.com/SorellaLabs/pade.git?branch=main#f4b0f250df24cbb739dddcb9ad505492acb7f39d"
-dependencies = [
- "itertools 0.14.0",
- "proc-macro2",
- "quote",
- "syn 2.0.104",
-]
-
-[[package]]
 name = "parity-scale-codec"
 version = "3.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3133,26 +3064,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
 dependencies = [
  "rand_core 0.9.3",
-]
-
-[[package]]
-name = "rayon"
-version = "1.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa"
-dependencies = [
- "either",
- "rayon-core",
-]
-
-[[package]]
-name = "rayon-core"
-version = "1.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
-dependencies = [
- "crossbeam-deque",
- "crossbeam-utils",
 ]
 
 [[package]]
@@ -4334,7 +4245,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uni-v4-common",
- "uni-v4-structure",
  "uni-v4-upkeeper",
 ]
 
@@ -4347,12 +4257,7 @@ dependencies = [
  "eyre",
  "itertools 0.14.0",
  "malachite",
- "malachite-q",
- "pade",
- "pade-macro",
- "rand 0.9.2",
  "serde",
- "thiserror 1.0.69",
  "uniswap_v3_math",
 ]
 
@@ -4362,24 +4267,14 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "alloy-primitives",
- "arraydeque",
  "async-trait",
- "auto_impl",
- "base64",
  "convert_case",
  "dashmap",
- "eyre",
  "futures",
- "futures-util",
- "hex",
  "itertools 0.14.0",
  "jsonrpsee",
- "rand 0.9.2",
- "rayon",
  "serde",
- "serde_json",
  "thiserror 1.0.69",
- "tokio",
  "tracing",
  "uni-v4-common",
  "uni-v4-structure",
