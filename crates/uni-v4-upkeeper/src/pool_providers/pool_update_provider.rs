@@ -16,7 +16,9 @@ use alloy::{
 };
 use futures::{FutureExt, StreamExt, stream::Stream};
 use thiserror::Error;
-use uni_v4_common::{ModifyLiquidityEventData, PoolId, PoolUpdate, Slot0Data, SwapEventData};
+use uni_v4_common::{
+    ModifyLiquidityEventData, PoolId, PoolUpdate, Slot0Data, StreamMode, SwapEventData
+};
 
 use crate::{
     pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
@@ -94,7 +96,8 @@ where
     event_history:              VecDeque<StoredEvent>,
     current_block:              u64,
     reorg_detection_blocks:     u64,
-    reorg_lookback_block_chunk: u64
+    reorg_lookback_block_chunk: u64,
+    stream_mode:                StreamMode
 }
 
 impl<P> PoolUpdateProvider<P>
@@ -168,8 +171,15 @@ where
             event_history: VecDeque::with_capacity(reorg_detection_blocks as usize),
             current_block,
             reorg_detection_blocks,
-            reorg_lookback_block_chunk
+            reorg_lookback_block_chunk,
+            stream_mode: StreamMode::default()
         }
+    }
+
+    /// Set the stream mode for this provider
+    pub fn with_stream_mode(mut self, mode: StreamMode) -> Self {
+        self.stream_mode = mode;
+        self
     }
 
     /// Add a pool to track
@@ -651,7 +661,18 @@ where
 
         // 2. Get inverse liquidity events
         let inverse_events = self.get_inverse_liquidity_events(reorg_start, self.current_block);
-        updates.extend(inverse_events.clone());
+
+        // Filter inverse events based on stream mode
+        match self.stream_mode {
+            StreamMode::Full => {
+                updates.extend(inverse_events.clone());
+            }
+            StreamMode::InitializationOnly => {
+                // In InitializationOnly mode, we don't need inverse liquidity
+                // events as we're not tracking swap/liquidity
+                // changes
+            }
+        }
 
         // 3. Clear affected history
         self.clear_history_from_block(reorg_start);
@@ -670,7 +691,25 @@ where
                     }
                 }
 
-                updates.extend(fresh_events);
+                // Filter fresh events based on stream mode
+                match self.stream_mode {
+                    StreamMode::Full => {
+                        updates.extend(fresh_events);
+                    }
+                    StreamMode::InitializationOnly => {
+                        // Only include initialization-related updates
+                        updates.extend(fresh_events.into_iter().filter(|update| {
+                            matches!(
+                                update,
+                                PoolUpdate::NewPool { .. }
+                                    | PoolUpdate::FeeUpdate { .. }
+                                    | PoolUpdate::UpdatedSlot0 { .. }
+                                    | PoolUpdate::NewPoolState { .. }
+                                    | PoolUpdate::PoolRemoved { .. }
+                            )
+                        }));
+                    }
+                }
 
                 // 5. Query slot0 for affected pools
                 for pool_id in affected_pools {
@@ -704,7 +743,26 @@ where
             // Then process block events
             match self.process_block_events(block_number).await {
                 Ok(block_updates) => {
-                    updates.extend(block_updates);
+                    // Filter updates based on stream mode
+                    match self.stream_mode {
+                        StreamMode::Full => {
+                            // Include all updates
+                            updates.extend(block_updates);
+                        }
+                        StreamMode::InitializationOnly => {
+                            // Only include initialization-related updates
+                            updates.extend(block_updates.into_iter().filter(|update| {
+                                matches!(
+                                    update,
+                                    PoolUpdate::NewPool { .. }
+                                        | PoolUpdate::FeeUpdate { .. }
+                                        | PoolUpdate::UpdatedSlot0 { .. }
+                                        | PoolUpdate::NewPoolState { .. }
+                                        | PoolUpdate::PoolRemoved { .. }
+                                )
+                            }));
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!("Failed to process block {}: {}", block_number, e);

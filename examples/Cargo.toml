@@ -21,6 +21,10 @@ path = "pool_manager_with_channel.rs"
 name = "test_channel_mode"
 path = "test_channel_mode.rs"
 
+[[bin]]
+name = "pool_manager_initialization_only"
+path = "pool_manager_initialization_only.rs"
+
 [dependencies]
 # Internal dependencies
 uni-v4-common.workspace = true

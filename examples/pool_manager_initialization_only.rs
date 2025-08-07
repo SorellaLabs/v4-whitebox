@@ -36,11 +36,7 @@ async fn main() -> Result<()> {
     let ws = WsConnect::new(ws_url);
     let provider = Arc::new(ProviderBuilder::default().connect_ws(ws).await?);
 
-    println!("📊 Setting up pool update provider...");
-
-    // Choose the stream mode (Full or InitializationOnly)
-    let stream_mode = StreamMode::Full; // Change to StreamMode::InitializationOnly to filter updates
-
+    println!("📊 Setting up pool update provider with InitializationOnly mode...");
     let update_provider = PoolUpdateProvider::new(
         provider.clone(),
         pool_manager_address,
@@ -49,9 +45,7 @@ async fn main() -> Result<()> {
         Default::default()
     )
     .await
-    .with_stream_mode(stream_mode);
-
-    println!("   Using stream mode: {:?}", stream_mode);
+    .with_stream_mode(StreamMode::InitializationOnly); // Set InitializationOnly mode
 
     // Create block stream
     let latest_block = provider
@@ -77,7 +71,7 @@ async fn main() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<PoolUpdate>(1000);
 
     // Build service with channel mode
-    println!("🔧 Building pool manager service with channel mode...");
+    println!("🔧 Building pool manager service with InitializationOnly mode...");
     let service = PoolManagerServiceBuilder::<_, _, NoOpSlot0Stream>::new(
         provider.clone(),
         angstrom_address,
@@ -92,9 +86,15 @@ async fn main() -> Result<()> {
     .build()
     .await?;
 
-    println!("✅ Pool service initialized in channel mode!");
+    println!("✅ Pool service initialized in InitializationOnly mode!");
     println!("📊 Found {} pools", service.get_pools().len());
     println!("🔗 Current block: {}", service.current_block());
+    println!("\n📋 InitializationOnly mode will only stream:");
+    println!("   • New pool creations");
+    println!("   • Pool fee updates");
+    println!("   • Pool removals");
+    println!("   • Slot0 updates (if configured)");
+    println!("   ❌ Swap and liquidity events will be filtered out\n");
 
     // Create a local pool instance for the receiver
     let initial_pools = service.get_pools();
@@ -103,9 +103,10 @@ async fn main() -> Result<()> {
     tokio::spawn(service);
 
     // Spawn a task to receive and process updates
-    let update_processor = tokio::spawn(async move {
+    let _update_processor = tokio::spawn(async move {
         let mut local_pools = initial_pools;
         let mut message_count = 0;
+        let mut filtered_count = 0;
 
         println!("📨 Starting message receiver...");
 
@@ -118,22 +119,32 @@ async fn main() -> Result<()> {
                     println!("📦 Block #{}: Received NewBlock", block);
                 }
                 PoolUpdate::NewPool { pool_id, .. } => {
-                    println!("🏊 Received NewPool config for pool {:?}", pool_id);
+                    println!("🆕 Received NewPool config for pool {:?}", pool_id);
                 }
-                PoolUpdate::SwapEvent { pool_id, .. } => {
-                    println!("💱 Received SwapEvent for pool {:?}", pool_id);
+                PoolUpdate::FeeUpdate { pool_id, bundle_fee, swap_fee, protocol_fee, .. } => {
+                    println!(
+                        "💰 Received FeeUpdate for pool {:?} - bundle: {}, swap: {}, protocol: {}",
+                        pool_id, bundle_fee, swap_fee, protocol_fee
+                    );
                 }
-                PoolUpdate::LiquidityEvent { pool_id, .. } => {
-                    println!("💧 Received LiquidityEvent for pool {:?}", pool_id);
+                PoolUpdate::PoolRemoved { pool_id, .. } => {
+                    println!("🗑️  Received PoolRemoved for pool {:?}", pool_id);
                 }
-                PoolUpdate::NewTicks { pool_id, ticks, .. } => {
-                    println!("📊 Received NewTicks for pool {:?} ({} ticks)", pool_id, ticks.len());
+                PoolUpdate::UpdatedSlot0 { pool_id, .. } => {
+                    println!("📊 Received UpdatedSlot0 for pool {:?}", pool_id);
                 }
                 PoolUpdate::NewPoolState { pool_id, .. } => {
-                    println!("🆕 Received NewPoolState with state for pool {:?}", pool_id);
+                    println!("🏊 Received NewPoolState for pool {:?}", pool_id);
                 }
-                PoolUpdate::Slot0Update(update) => {
-                    println!("🔄 Received Slot0Update for pool {:?}", update.angstrom_pool_id);
+                PoolUpdate::SwapEvent { .. } => {
+                    // This shouldn't happen in InitializationOnly mode
+                    filtered_count += 1;
+                    println!("⚠️  Unexpected SwapEvent received (should be filtered)");
+                }
+                PoolUpdate::LiquidityEvent { .. } => {
+                    // This shouldn't happen in InitializationOnly mode
+                    filtered_count += 1;
+                    println!("⚠️  Unexpected LiquidityEvent received (should be filtered)");
                 }
                 _ => {
                     println!("📬 Received other message type");
@@ -150,6 +161,9 @@ async fn main() -> Result<()> {
                     message_count,
                     local_pools.len()
                 );
+                if filtered_count > 0 {
+                    println!("   ⚠️  {} unexpected events received", filtered_count);
+                }
             }
         }
 
@@ -157,9 +171,9 @@ async fn main() -> Result<()> {
     });
 
     // Main loop - just wait and print status
-    println!("🔄 Pool manager running in channel mode...");
-    println!("   All updates are being sent via channel");
-    println!("   Receiver task is processing updates independently");
+    println!("🔄 Pool manager running in InitializationOnly mode...");
+    println!("   Only initialization updates are being streamed");
+    println!("   Swap and liquidity events are filtered out");
     println!("Press Ctrl+C to stop");
 
     loop {
