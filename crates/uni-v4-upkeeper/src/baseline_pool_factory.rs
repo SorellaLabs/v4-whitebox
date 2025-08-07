@@ -13,13 +13,11 @@ use alloy::{
 use dashmap::DashMap;
 use futures::{Stream, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use thiserror::Error;
-use uni_v4_common::PoolId;
+use uni_v4_common::{PoolId, PoolKey};
 use uni_v4_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo};
 
 use super::pool_data_loader::{DataLoader, PoolDataLoader, TickData};
-use crate::{
-    fetch_pool_keys::fetch_angstrom_pools, pool_key::PoolKey, pool_registry::UniswapPoolRegistry
-};
+use crate::{fetch_pool_keys::fetch_angstrom_pools, pool_registry::UniswapPoolRegistry};
 
 pub const INITIAL_TICKS_PER_SIDE: u16 = 300;
 const DEFAULT_TICKS_PER_BATCH: usize = 10;

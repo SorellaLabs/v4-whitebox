@@ -3,11 +3,10 @@ use std::{collections::HashSet, sync::Arc};
 use alloy::{primitives::Address, providers::Provider};
 use futures::Stream;
 use tokio::sync::mpsc;
-use uni_v4_common::{PoolId, PoolUpdate};
+use uni_v4_common::{PoolId, PoolKey, PoolUpdate};
 
 use super::{
     pool_data_loader::DataLoader,
-    pool_key::PoolKey,
     pool_manager_service::{PoolManagerService, PoolManagerServiceError},
     pool_registry::UniswapPoolRegistry,
     slot0::Slot0Stream

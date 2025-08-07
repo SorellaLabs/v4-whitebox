@@ -7,17 +7,7 @@ use alloy::{
     sol_types::SolEvent
 };
 use futures::StreamExt;
-
-use super::pool_key::PoolKey;
-
-/// Pool key with fee configuration
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct PoolKeyWithFees {
-    pub pool_key:     PoolKey,
-    pub bundle_fee:   u32,
-    pub swap_fee:     u32,
-    pub protocol_fee: u32
-}
+use uni_v4_common::{PoolKey, PoolKeyWithFees};
 
 /// Controller V1 address - this could be made configurable
 static CONTROLLER_V1_ADDRESS: OnceLock<Address> = OnceLock::new();

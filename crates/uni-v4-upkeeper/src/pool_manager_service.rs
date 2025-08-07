@@ -9,13 +9,12 @@ use alloy::{primitives::Address, providers::Provider};
 use futures::{Future, Stream, StreamExt};
 use thiserror::Error;
 use tokio::sync::mpsc;
-use uni_v4_common::{PoolId, PoolUpdate, Slot0Update, UniswapPools};
+use uni_v4_common::{PoolId, PoolKey, PoolUpdate, Slot0Update, UniswapPools};
 use uni_v4_structure::BaselinePoolState;
 
 use super::{
     baseline_pool_factory::{BaselinePoolFactory, BaselinePoolFactoryError, UpdateMessage},
-    fetch_pool_keys::set_controller_address,
-    pool_key::PoolKey
+    fetch_pool_keys::set_controller_address
 };
 use crate::{pool_providers::PoolEventStream, slot0::Slot0Stream};
 

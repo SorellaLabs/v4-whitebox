@@ -5,7 +5,6 @@ pub mod baseline_pool_factory;
 pub mod fetch_pool_keys;
 pub mod loaders;
 pub mod pool_data_loader;
-pub mod pool_key;
 pub mod pool_manager_service;
 pub mod pool_manager_service_builder;
 pub mod pool_providers;

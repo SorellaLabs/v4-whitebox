@@ -1,3 +1,4 @@
+pub mod pool_key;
 pub mod pools;
 
 #[allow(unused)]
@@ -7,6 +8,7 @@ pub mod traits;
 pub mod updates;
 
 // Re-export commonly used types
+pub use pool_key::{PoolKey, PoolKeyWithFees};
 pub use pools::{PoolError, PoolId, SwapSimulationError, UniswapPools};
 pub use traits::{PoolUpdateDelivery, PoolUpdateDeliveryExt};
 pub use updates::{

@@ -1,7 +1,8 @@
 use alloy::sol_types::SolValue;
 use alloy_primitives::keccak256;
 use serde::{Deserialize, Serialize};
-use uni_v4_common::PoolId;
+
+use crate::PoolId;
 
 alloy::sol!(
     type Currency is address;
@@ -21,6 +22,15 @@ alloy::sol!(
         IHooks hooks;
     }
 );
+
+/// Pool key with fee configuration
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct PoolKeyWithFees {
+    pub pool_key:     PoolKey,
+    pub bundle_fee:   u32,
+    pub swap_fee:     u32,
+    pub protocol_fee: u32
+}
 
 impl From<PoolKey> for PoolId {
     fn from(value: PoolKey) -> Self {

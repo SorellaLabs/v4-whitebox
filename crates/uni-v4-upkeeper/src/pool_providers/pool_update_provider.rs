@@ -17,12 +17,11 @@ use alloy::{
 use futures::{FutureExt, StreamExt, stream::Stream};
 use thiserror::Error;
 use uni_v4_common::{
-    ModifyLiquidityEventData, PoolId, PoolUpdate, Slot0Data, StreamMode, SwapEventData
+    ModifyLiquidityEventData, PoolId, PoolKey, PoolUpdate, Slot0Data, StreamMode, SwapEventData
 };
 
 use crate::{
     pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
-    pool_key::PoolKey,
     pool_providers::PoolEventStream,
     pool_registry::UniswapPoolRegistry
 };
