@@ -1,5 +1,7 @@
 pub mod pools;
-mod pools_impl;
+
+#[allow(unused)]
+pub mod pools_impl;
 mod shared_pools;
 pub mod traits;
 pub mod updates;
