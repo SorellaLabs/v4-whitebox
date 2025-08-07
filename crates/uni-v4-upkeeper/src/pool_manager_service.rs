@@ -137,6 +137,23 @@ where
             slot0_stream.subscribe_pools(angstrom_pool_ids);
         }
 
+        // Send all initialized pools through the channel on startup
+        if service.update_sender.is_some() {
+            let initial_pool_updates: Vec<PoolUpdate> = service
+                .pools
+                .get_pools()
+                .iter()
+                .map(|entry| PoolUpdate::NewPoolState {
+                    pool_id: *entry.key(),
+                    state:   entry.value().clone()
+                })
+                .collect();
+
+            for update in initial_pool_updates {
+                service.dispatch_update(update);
+            }
+        }
+
         Ok(service)
     }
 

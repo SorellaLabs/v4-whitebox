@@ -1,11 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy::{
     eips::BlockNumberOrTag,
     primitives::address,
     providers::{Provider, ProviderBuilder, WsConnect}
 };
-use angstrom_v4::slot0::Slot0Client;
 use eyre::Result;
 use futures::StreamExt;
 use jsonrpsee::ws_client::WsClientBuilder;
@@ -16,7 +15,8 @@ use uni_v4_upkeeper::{
     pool_providers::{
         completed_block_stream::CompletedBlockStream,
         pool_update_provider::{PoolUpdateProvider, StateStream}
-    }
+    },
+    slot0::Slot0Client
 };
 
 #[tokio::main]
@@ -105,14 +105,13 @@ async fn main() -> Result<()> {
     println!("   ❌ Swap and liquidity events will be filtered out\n");
 
     // Create a local pool instance for the receiver
-    let initial_pools = service.get_pools();
 
     // Spawn the upkeeper service
     tokio::spawn(service);
 
     // Spawn a task to receive and process updates
     let _update_processor = tokio::spawn(async move {
-        let local_pools = initial_pools;
+        let mut local_pools = HashMap::new();
         let mut message_count = 0;
         let mut filtered_count = 0;
 
@@ -122,12 +121,9 @@ async fn main() -> Result<()> {
             message_count += 1;
 
             // Log the message type
-            match &msg {
+            match msg {
                 PoolUpdate::NewBlock(block) => {
                     println!("📦 Block #{}: Received NewBlock", block);
-                }
-                PoolUpdate::NewPool { pool_id, .. } => {
-                    println!("🆕 Received NewPool config for pool {:?}", pool_id);
                 }
                 PoolUpdate::FeeUpdate { pool_id, bundle_fee, swap_fee, protocol_fee, .. } => {
                     println!(
@@ -141,7 +137,8 @@ async fn main() -> Result<()> {
                 PoolUpdate::UpdatedSlot0 { pool_id, .. } => {
                     println!("📊 Received UpdatedSlot0 for pool {:?}", pool_id);
                 }
-                PoolUpdate::NewPoolState { pool_id, .. } => {
+                PoolUpdate::NewPoolState { pool_id, state } => {
+                    local_pools.insert(pool_id, state);
                     println!("🏊 Received NewPoolState for pool {:?}", pool_id);
                 }
                 PoolUpdate::SwapEvent { .. } => {
@@ -160,7 +157,6 @@ async fn main() -> Result<()> {
             }
 
             // Apply the update to our local pool instance
-            local_pools.update_pools(vec![msg]);
 
             // Print stats every 100 messages
             if message_count % 100 == 0 {
