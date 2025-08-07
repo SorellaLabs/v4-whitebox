@@ -5,8 +5,10 @@ use alloy::{
     primitives::address,
     providers::{Provider, ProviderBuilder, WsConnect}
 };
+use angstrom_v4::slot0::Slot0Client;
 use eyre::Result;
 use futures::StreamExt;
+use jsonrpsee::ws_client::WsClientBuilder;
 use tokio::sync::mpsc;
 use uni_v4_common::{PoolUpdate, StreamMode};
 use uni_v4_upkeeper::{
@@ -47,6 +49,11 @@ async fn main() -> Result<()> {
     .await
     .with_stream_mode(StreamMode::InitializationOnly); // Set InitializationOnly mode
 
+    let ws_url = std::env::var("ANGSTROM_WS_URL").expect("no angstrom ws set");
+
+    let ws_client = Arc::new(WsClientBuilder::default().build(&ws_url).await?);
+    let slot0_client = Slot0Client::new(ws_client);
+
     // Create block stream
     let latest_block = provider
         .get_block(BlockNumberOrTag::Latest.into())
@@ -82,6 +89,7 @@ async fn main() -> Result<()> {
     )
     .with_initial_tick_range_size(300)
     .with_tick_edge_threshold(100)
+    .with_slot0_stream(slot0_client)
     .with_update_channel(tx) // Enable channel mode
     .build()
     .await?;
@@ -104,7 +112,7 @@ async fn main() -> Result<()> {
 
     // Spawn a task to receive and process updates
     let _update_processor = tokio::spawn(async move {
-        let mut local_pools = initial_pools;
+        let local_pools = initial_pools;
         let mut message_count = 0;
         let mut filtered_count = 0;
 
