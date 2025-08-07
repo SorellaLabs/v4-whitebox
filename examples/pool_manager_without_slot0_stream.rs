@@ -4,18 +4,17 @@ use alloy::{
     primitives::address,
     providers::{Provider, ProviderBuilder}
 };
-use angstrom_v4::{
+use futures::StreamExt;
+use uni_v4_common::PoolId;
+use uni_v4_upkeeper::{
+    pool_manager_service_builder::PoolManagerServiceBuilder,
     pool_providers::{
         completed_block_stream::CompletedBlockStream,
         pool_update_provider::{PoolUpdateProvider, StateStream}
     },
-    pools::PoolId,
-    slot0::NoOpSlot0Stream,
-    uniswap::{
-        pool_manager_service_builder::PoolManagerServiceBuilder, pool_registry::UniswapPoolRegistry
-    }
+    pool_registry::UniswapPoolRegistry,
+    slot0::NoOpSlot0Stream
 };
-use futures::StreamExt;
 
 /// Example demonstrating PoolManagerServiceBuilder without slot0 stream
 ///
@@ -82,6 +81,7 @@ async fn main() -> eyre::Result<()> {
     );
     let event_stream = StateStream::new(update_provider, block_stream);
     // Build service with event stream but without slot0 stream
+    println!("🔧 Configuring pool manager with custom settings...");
     let service = PoolManagerServiceBuilder::<_, _, NoOpSlot0Stream>::new(
         provider.clone(),
         angstrom_address,
@@ -90,7 +90,11 @@ async fn main() -> eyre::Result<()> {
         deploy_block,
         event_stream
     )
-    .with_initial_tick_range_size(100) // Custom tick range
+    .with_initial_tick_range_size(100) // Custom tick range (default: 300)
+    .with_tick_edge_threshold(50) // When to load more ticks (default: 100)
+    .with_ticks_per_batch(20) // Ticks loaded per batch (default: 10)
+    .with_reorg_detection_blocks(15) // Blocks to keep for reorg detection (default: 10)
+    .with_reorg_lookback_block_chunk(150) // Chunk size for reorg lookback (default: 100)
     .build()
     .await?;
 

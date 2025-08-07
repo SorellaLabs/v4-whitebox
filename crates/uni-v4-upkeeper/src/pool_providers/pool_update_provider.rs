@@ -1,6 +1,6 @@
 use std::{
-    cmp::Ordering,
     collections::{HashSet, VecDeque},
+    future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll}
@@ -9,26 +9,29 @@ use std::{
 use alloy::{
     consensus::Transaction,
     eips::BlockId,
-    primitives::{Address, I256, U160, aliases::I24},
+    primitives::{Address, U160, aliases::I24},
     providers::Provider,
     rpc::types::{Block, Filter},
     sol_types::{SolCall, SolEvent}
 };
 use futures::{FutureExt, StreamExt, stream::Stream};
 use thiserror::Error;
-
-use crate::{
-    pool_providers::PoolEventStream,
-    uniswap::{
-        pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
-        pool_key::PoolKey,
-        pool_registry::UniswapPoolRegistry,
-        pools::PoolId
-    }
+use uni_v4_common::{
+    ModifyLiquidityEventData, PoolId, PoolUpdate, Slot0Data, StreamMode, SwapEventData
 };
 
-/// Number of blocks to keep in history for reorg detection
-const REORG_DETECTION_BLOCKS: u64 = 10;
+use crate::{
+    pool_data_loader::{DataLoader, IUniswapV4Pool, PoolDataLoader},
+    pool_key::PoolKey,
+    pool_providers::PoolEventStream,
+    pool_registry::UniswapPoolRegistry
+};
+
+/// Default number of blocks to keep in history for reorg detection
+const DEFAULT_REORG_DETECTION_BLOCKS: u64 = 10;
+
+/// Default chunk size for block processing
+const DEFAULT_REORG_LOOKBACK_BLOCK_CHUNK: u64 = 100;
 
 alloy::sol! {
     #[derive(Debug, PartialEq, Eq)]
@@ -69,103 +72,6 @@ pub enum PoolUpdateError {
     ReorgHandling(String)
 }
 
-/// Represents different types of pool updates
-#[derive(Debug, Clone)]
-pub enum PoolUpdate {
-    /// New block has been processed
-    NewBlock(u64),
-    /// Swap event occurred
-    SwapEvent {
-        pool_id:   PoolId,
-        block:     u64,
-        tx_index:  u64,
-        log_index: u64,
-        event:     SwapEventData
-    },
-    /// Liquidity modification event occurred
-    LiquidityEvent {
-        pool_id:   PoolId,
-        block:     u64,
-        tx_index:  u64,
-        log_index: u64,
-        event:     ModifyLiquidityEventData
-    },
-    /// Pool configured/added via controller
-    PoolConfigured {
-        pool_id:      PoolId,
-        pool_key:     PoolKey,
-        block:        u64,
-        bundle_fee:   u32,
-        swap_fee:     u32,
-        protocol_fee: u32,
-        tick_spacing: i32
-    },
-    /// Pool removed via controller
-    PoolRemoved { pool_id: PoolId, block: u64 },
-    /// Fee update event. the pool_id here is the uniswap pool_id
-    FeeUpdate {
-        pool_id:      PoolId,
-        block:        u64,
-        bundle_fee:   u32,
-        swap_fee:     u32,
-        protocol_fee: u32
-    },
-    /// Reorg detected
-    Reorg { from_block: u64, to_block: u64 },
-    /// Updated slot0 data after reorg
-    UpdatedSlot0 { pool_id: PoolId, data: Slot0Data }
-}
-
-impl PoolUpdate {
-    pub fn sort(&self, b: &Self) -> Ordering {
-        let (this_tx_index, this_log_index) = match self {
-            PoolUpdate::SwapEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
-            PoolUpdate::LiquidityEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
-            _ => (u64::MAX, u64::MAX)
-        };
-
-        let (other_tx_index, other_log_index) = match b {
-            PoolUpdate::SwapEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
-            PoolUpdate::LiquidityEvent { tx_index, log_index, .. } => (*tx_index, *log_index),
-            _ => (u64::MAX, u64::MAX)
-        };
-
-        this_tx_index
-            .cmp(&other_tx_index)
-            .then_with(|| this_log_index.cmp(&other_log_index))
-    }
-}
-
-/// Swap event data
-#[derive(Debug, Clone)]
-pub struct SwapEventData {
-    pub sender:         Address,
-    pub amount0:        i128,
-    pub amount1:        i128,
-    pub sqrt_price_x96: U160,
-    pub liquidity:      u128,
-    pub tick:           i32,
-    pub fee:            u32
-}
-
-/// Modify liquidity event data
-#[derive(Debug, Clone)]
-pub struct ModifyLiquidityEventData {
-    pub sender:          Address,
-    pub tick_lower:      i32,
-    pub tick_upper:      i32,
-    pub liquidity_delta: I256,
-    pub salt:            [u8; 32]
-}
-
-/// Current slot0 data for a pool
-#[derive(Debug, Clone)]
-pub struct Slot0Data {
-    pub sqrt_price_x96: U160,
-    pub tick:           i32,
-    pub liquidity:      u128
-}
-
 /// Stored event for reorg handling - only liquidity events need to be stored
 #[derive(Debug, Clone)]
 struct StoredEvent {
@@ -181,14 +87,17 @@ pub struct PoolUpdateProvider<P>
 where
     P: Provider + 'static
 {
-    provider:           Arc<P>,
-    pool_manager:       Address,
-    controller_address: Address,
-    angstrom_address:   Address,
-    pool_registry:      UniswapPoolRegistry,
-    tracked_pools:      HashSet<PoolId>,
-    event_history:      VecDeque<StoredEvent>,
-    current_block:      u64
+    provider:                   Arc<P>,
+    pool_manager:               Address,
+    controller_address:         Address,
+    angstrom_address:           Address,
+    pool_registry:              UniswapPoolRegistry,
+    tracked_pools:              HashSet<PoolId>,
+    event_history:              VecDeque<StoredEvent>,
+    current_block:              u64,
+    reorg_detection_blocks:     u64,
+    reorg_lookback_block_chunk: u64,
+    stream_mode:                StreamMode
 }
 
 impl<P> PoolUpdateProvider<P>
@@ -229,6 +138,29 @@ where
         pool_registry: UniswapPoolRegistry,
         current_block: u64
     ) -> Self {
+        Self::new_with_config(
+            provider,
+            pool_manager,
+            controller_address,
+            angstrom_address,
+            pool_registry,
+            current_block,
+            DEFAULT_REORG_DETECTION_BLOCKS,
+            DEFAULT_REORG_LOOKBACK_BLOCK_CHUNK
+        )
+    }
+
+    /// Create a new pool update provider with custom configuration
+    pub fn new_with_config(
+        provider: Arc<P>,
+        pool_manager: Address,
+        controller_address: Address,
+        angstrom_address: Address,
+        pool_registry: UniswapPoolRegistry,
+        current_block: u64,
+        reorg_detection_blocks: u64,
+        reorg_lookback_block_chunk: u64
+    ) -> Self {
         Self {
             provider,
             pool_manager,
@@ -236,9 +168,18 @@ where
             angstrom_address,
             pool_registry,
             tracked_pools: HashSet::new(),
-            event_history: VecDeque::with_capacity(REORG_DETECTION_BLOCKS as usize),
-            current_block
+            event_history: VecDeque::with_capacity(reorg_detection_blocks as usize),
+            current_block,
+            reorg_detection_blocks,
+            reorg_lookback_block_chunk,
+            stream_mode: StreamMode::default()
         }
+    }
+
+    /// Set the stream mode for this provider
+    pub fn with_stream_mode(mut self, mode: StreamMode) -> Self {
+        self.stream_mode = mode;
+        self
     }
 
     /// Add a pool to track
@@ -353,14 +294,15 @@ where
                     .private_key_from_public(&angstrom_pool_id)
                     .unwrap();
 
-                updates.push(PoolUpdate::PoolConfigured {
-                    pool_key,
+                updates.push(PoolUpdate::NewPool {
                     pool_id,
-                    block: block_number,
+                    token0: pool_key.currency0,
+                    token1: pool_key.currency1,
                     bundle_fee: event.bundleFee.to(),
                     swap_fee: event.unlockedFee.to(),
                     protocol_fee: event.protocolUnlockedFee.to(),
-                    tick_spacing: event.tickSpacing as i32
+                    tick_spacing: event.tickSpacing as i32,
+                    block: block_number
                 });
             }
 
@@ -572,11 +514,11 @@ where
     fn add_to_history(&mut self, event: StoredEvent) {
         self.event_history.push_back(event);
 
-        // Maintain exactly REORG_DETECTION_BLOCKS worth of history
+        // Maintain exactly reorg_detection_blocks worth of history
         // Remove all events from blocks that are too old
         let cutoff_block = self
             .current_block
-            .saturating_sub(REORG_DETECTION_BLOCKS - 1);
+            .saturating_sub(self.reorg_detection_blocks - 1);
 
         // Remove all events from blocks older than cutoff
         self.event_history.retain(|e| e.block >= cutoff_block);
@@ -633,11 +575,10 @@ where
         let mut all_updates = Vec::new();
 
         // Process blocks in chunks to avoid overwhelming the provider
-        const CHUNK_SIZE: u64 = 100;
         let mut current = from_block;
 
         while current <= to_block {
-            let end = (current + CHUNK_SIZE - 1).min(to_block);
+            let end = (current + self.reorg_lookback_block_chunk - 1).min(to_block);
 
             // Use the shared helper with store_in_history = false for backfilling
             let chunk_updates = self
@@ -691,7 +632,7 @@ where
                 PoolUpdate::SwapEvent { pool_id, .. }
                 | PoolUpdate::LiquidityEvent { pool_id, .. }
                 | PoolUpdate::UpdatedSlot0 { pool_id, .. }
-                | PoolUpdate::PoolConfigured { pool_id, .. }
+                | PoolUpdate::NewPool { pool_id, .. }
                 | PoolUpdate::PoolRemoved { pool_id, .. }
                 | PoolUpdate::FeeUpdate { pool_id, .. } => {
                     affected_pools.insert(*pool_id);
@@ -713,14 +654,25 @@ where
         let mut updates = Vec::new();
         let reorg_start = self
             .current_block
-            .saturating_sub(REORG_DETECTION_BLOCKS - 1);
+            .saturating_sub(self.reorg_detection_blocks - 1);
 
         // 1. First, emit the reorg event so the pipeline knows a reorg is happening
         updates.push(PoolUpdate::Reorg { from_block: reorg_start, to_block: self.current_block });
 
         // 2. Get inverse liquidity events
         let inverse_events = self.get_inverse_liquidity_events(reorg_start, self.current_block);
-        updates.extend(inverse_events.clone());
+
+        // Filter inverse events based on stream mode
+        match self.stream_mode {
+            StreamMode::Full => {
+                updates.extend(inverse_events.clone());
+            }
+            StreamMode::InitializationOnly => {
+                // In InitializationOnly mode, we don't need inverse liquidity
+                // events as we're not tracking swap/liquidity
+                // changes
+            }
+        }
 
         // 3. Clear affected history
         self.clear_history_from_block(reorg_start);
@@ -739,7 +691,25 @@ where
                     }
                 }
 
-                updates.extend(fresh_events);
+                // Filter fresh events based on stream mode
+                match self.stream_mode {
+                    StreamMode::Full => {
+                        updates.extend(fresh_events);
+                    }
+                    StreamMode::InitializationOnly => {
+                        // Only include initialization-related updates
+                        updates.extend(fresh_events.into_iter().filter(|update| {
+                            matches!(
+                                update,
+                                PoolUpdate::NewPool { .. }
+                                    | PoolUpdate::FeeUpdate { .. }
+                                    | PoolUpdate::UpdatedSlot0 { .. }
+                                    | PoolUpdate::NewPoolState { .. }
+                                    | PoolUpdate::PoolRemoved { .. }
+                            )
+                        }));
+                    }
+                }
 
                 // 5. Query slot0 for affected pools
                 for pool_id in affected_pools {
@@ -773,7 +743,26 @@ where
             // Then process block events
             match self.process_block_events(block_number).await {
                 Ok(block_updates) => {
-                    updates.extend(block_updates);
+                    // Filter updates based on stream mode
+                    match self.stream_mode {
+                        StreamMode::Full => {
+                            // Include all updates
+                            updates.extend(block_updates);
+                        }
+                        StreamMode::InitializationOnly => {
+                            // Only include initialization-related updates
+                            updates.extend(block_updates.into_iter().filter(|update| {
+                                matches!(
+                                    update,
+                                    PoolUpdate::NewPool { .. }
+                                        | PoolUpdate::FeeUpdate { .. }
+                                        | PoolUpdate::UpdatedSlot0 { .. }
+                                        | PoolUpdate::NewPoolState { .. }
+                                        | PoolUpdate::PoolRemoved { .. }
+                                )
+                            }));
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!("Failed to process block {}: {}", block_number, e);
@@ -783,10 +772,10 @@ where
             // Update current block
             self.current_block = block_number;
 
-            // Clean up old events from history to maintain exactly 10 blocks
+            // Clean up old events from history to maintain exactly reorg_detection_blocks
             let cutoff_block = self
                 .current_block
-                .saturating_sub(REORG_DETECTION_BLOCKS - 1);
+                .saturating_sub(self.reorg_detection_blocks - 1);
             self.event_history.retain(|e| e.block >= cutoff_block);
         } else if block_number < self.current_block {
             // Block is behind our current block, this shouldn't happen in normal operation

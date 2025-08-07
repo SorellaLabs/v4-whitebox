@@ -7,10 +7,13 @@ use alloy_primitives::{B256, FixedBytes};
 use dashmap::{DashMap, mapref::one::Ref};
 use thiserror::Error;
 use tokio::sync::{Notify, futures::Notified};
+use uni_v4_structure::BaselinePoolState;
 use uniswap_v3_math::error::UniswapV3MathError;
 
-use super::ConversionError;
-use crate::{BaselinePoolState, pool_providers::pool_update_provider::PoolUpdate};
+use crate::{
+    traits::{PoolUpdateDelivery, PoolUpdateDeliveryExt},
+    updates::PoolUpdate
+};
 
 #[derive(Clone)]
 pub struct UniswapPools {
@@ -59,7 +62,7 @@ impl UniswapPools {
         self.notifier.notified()
     }
 
-    pub(crate) fn update_pools(&self, mut updates: Vec<PoolUpdate>) {
+    pub fn update_pools(&self, mut updates: Vec<PoolUpdate>) {
         if updates.is_empty() {
             return
         }
@@ -115,6 +118,35 @@ impl UniswapPools {
                     let state = pool.value_mut();
                     state.update_slot0(data.tick, data.sqrt_price_x96.into(), data.liquidity);
                 }
+                PoolUpdate::NewTicks { pool_id, ticks, tick_bitmap } => {
+                    let Some(mut pool) = self.pools.get_mut(&pool_id) else {
+                        continue;
+                    };
+
+                    let baseline = pool.value_mut().get_baseline_liquidity_mut();
+
+                    // Merge new ticks with existing ones
+                    baseline.initialized_ticks_mut().extend(ticks);
+
+                    // Update tick bitmap
+                    for (word_pos, word) in tick_bitmap {
+                        baseline.update_tick_bitmap(word_pos, word);
+                    }
+                }
+                PoolUpdate::NewPoolState { pool_id, state } => {
+                    self.pools.insert(pool_id, state);
+                }
+                PoolUpdate::Slot0Update(update) => {
+                    let Some(mut pool) = self.pools.get_mut(&update.angstrom_pool_id) else {
+                        continue;
+                    };
+
+                    pool.value_mut().update_slot0(
+                        update.tick,
+                        update.sqrt_price_x96.into(),
+                        update.liquidity
+                    );
+                }
                 _ => {}
             }
         }
@@ -130,6 +162,32 @@ impl UniswapPools {
             .store(new_block_number, std::sync::atomic::Ordering::SeqCst);
 
         self.notifier.notify_waiters();
+    }
+
+    /// Update pools using a PoolUpdateDelivery source
+    /// Processes all available updates from the source
+    pub fn update_from_source<T: PoolUpdateDelivery>(&self, source: &mut T) {
+        let mut updates = Vec::new();
+
+        // Collect all available updates using the extension trait
+        while let Some(update) = source.next_update() {
+            updates.push(update);
+        }
+
+        // Process them using the existing method
+        self.update_pools(updates);
+    }
+
+    /// Update pools by processing a single update from a PoolUpdateDelivery
+    /// source Returns true if an update was processed, false if no updates
+    /// were available
+    pub fn update_single_from_source<T: PoolUpdateDelivery>(&self, source: &mut T) -> bool {
+        if let Some(update) = source.next_update() {
+            self.update_pools(vec![update]);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -166,8 +224,6 @@ pub enum PoolError {
     AlloyContractError(#[from] alloy::contract::Error),
     #[error(transparent)]
     AlloySolTypeError(#[from] alloy::sol_types::Error),
-    #[error(transparent)]
-    ConversionError(#[from] ConversionError),
     #[error(transparent)]
     Eyre(#[from] eyre::Error)
 }

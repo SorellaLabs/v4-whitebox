@@ -11,17 +11,14 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     rpc::types::Block
 };
-use angstrom_v4::{
-    pool_providers::pool_update_provider::{PoolUpdateProvider, StateStream},
-    slot0::NoOpSlot0Stream,
-    sqrt_pricex96::SqrtPriceX96,
-    tick_info::TickInfo,
-    uniswap::{
-        pool_manager_service_builder::PoolManagerServiceBuilder,
-        pool_registry::UniswapPoolRegistry, pools::PoolId
-    }
-};
+use angstrom_v4::{PoolId, sqrt_pricex96::SqrtPriceX96, tick_info::TickInfo};
 use futures::Stream;
+use uni_v4_upkeeper::{
+    pool_manager_service_builder::PoolManagerServiceBuilder,
+    pool_providers::pool_update_provider::{PoolUpdateProvider, StateStream},
+    pool_registry::UniswapPoolRegistry,
+    slot0::NoOpSlot0Stream
+};
 
 // Test configuration - Uses ETH_URL environment variable
 fn get_eth_url() -> Option<String> {
@@ -115,7 +112,7 @@ async fn test_pool_state_consistency() {
         alloy::primitives::address!("0x000000000004444c5dc75cB358380D2e3dE08A90");
 
     // Set the controller address for the fetch function
-    uni_v4::uniswap::fetch_pool_keys::set_controller_address(controller_address);
+    uni_v4_upkeeper::fetch_pool_keys::set_controller_address(controller_address);
 
     // Create real provider
     let provider = Arc::new(

@@ -4,19 +4,18 @@ use alloy::{
     primitives::address,
     providers::{Provider, ProviderBuilder}
 };
-use angstrom_v4::{
+use futures::StreamExt;
+use jsonrpsee::ws_client::WsClientBuilder;
+use uni_v4_common::PoolId;
+use uni_v4_upkeeper::{
+    pool_manager_service_builder::PoolManagerServiceBuilder,
     pool_providers::{
         completed_block_stream::CompletedBlockStream,
         pool_update_provider::{PoolUpdateProvider, StateStream}
     },
-    slot0::NoOpSlot0Stream,
-    uniswap::{
-        pool_manager_service_builder::PoolManagerServiceBuilder,
-        pool_registry::UniswapPoolRegistry, pools::PoolId, slot0::Slot0Client
-    }
+    pool_registry::UniswapPoolRegistry,
+    slot0::{NoOpSlot0Stream, Slot0Client}
 };
-use futures::StreamExt;
-use jsonrpsee::ws_client::WsClientBuilder;
 
 /// Example demonstrating PoolManagerServiceBuilder with slot0 stream for
 /// real-time updates
@@ -97,6 +96,11 @@ async fn main() -> eyre::Result<()> {
         event_stream
     )
     .with_slot0_stream(slot0_client)
+    .with_initial_tick_range_size(300) // Standard tick range
+    .with_tick_edge_threshold(100) // Standard threshold
+    .with_ticks_per_batch(10) // Standard batch size
+    .with_reorg_detection_blocks(10) // Standard reorg detection
+    .with_reorg_lookback_block_chunk(100) // Standard chunk size
     .build()
     .await?;
 

@@ -44,11 +44,6 @@ jobs:
       with:
         components: clippy
 
-    - name: Install Foundry
-      uses: foundry-rs/foundry-toolchain@v1
-      with:
-        version: nightly
-
     - name: Cache cargo registry
       uses: actions/cache@v4
       with:
@@ -74,11 +69,6 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Install Foundry
-      uses: foundry-rs/foundry-toolchain@v1
-      with:
-        version: nightly
-
     - name: Cache cargo registry
       uses: actions/cache@v4
       with:
@@ -103,11 +93,6 @@ jobs:
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-
-    - name: Install Foundry
-      uses: foundry-rs/foundry-toolchain@v1
-      with:
-        version: nightly
 
     - name: Cache cargo registry
       uses: actions/cache@v4
@@ -136,11 +121,6 @@ jobs:
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-
-    - name: Install Foundry
-      uses: foundry-rs/foundry-toolchain@v1
-      with:
-        version: nightly
 
     - name: Cache cargo registry
       uses: actions/cache@v4

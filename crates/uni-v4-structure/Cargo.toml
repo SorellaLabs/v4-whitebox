@@ -1,0 +1,15 @@
+[package]
+name = "uni-v4-structure"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+alloy.workspace = true
+alloy-primitives.workspace = true
+eyre.workspace = true
+itertools.workspace = true
+malachite.workspace = true
+serde.workspace = true
+uniswap_v3_math.workspace = true

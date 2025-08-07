@@ -13,19 +13,16 @@ use alloy::{
 use dashmap::DashMap;
 use futures::{Stream, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use thiserror::Error;
+use uni_v4_common::PoolId;
+use uni_v4_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo};
 
-use super::{
-    pool_data_loader::{DataLoader, PoolDataLoader, TickData},
-    pools::PoolId
-};
+use super::pool_data_loader::{DataLoader, PoolDataLoader, TickData};
 use crate::{
-    fetch_pool_keys::fetch_angstrom_pools,
-    uni_structure::{BaselinePoolState, liquidity_base::BaselineLiquidity, tick_info::TickInfo},
-    uniswap::{pool_key::PoolKey, pool_registry::UniswapPoolRegistry}
+    fetch_pool_keys::fetch_angstrom_pools, pool_key::PoolKey, pool_registry::UniswapPoolRegistry
 };
 
 pub const INITIAL_TICKS_PER_SIDE: u16 = 300;
-const TICKS_PER_BATCH: usize = 10;
+const DEFAULT_TICKS_PER_BATCH: usize = 10;
 
 #[derive(Error, Debug)]
 pub enum BaselinePoolFactoryError {
@@ -49,6 +46,7 @@ pub struct BaselinePoolFactory<P> {
     pool_manager:        Address,
     tick_band:           u16,
     tick_edge_threshold: u16,
+    ticks_per_batch:     usize,
     tick_loading: FuturesUnordered<
         BoxFuture<'static, (PoolId, HashMap<i32, TickInfo>, HashMap<i16, alloy::primitives::U256>)>
     >,
@@ -70,7 +68,8 @@ where
         pool_manager: Address,
         tick_band: Option<u16>,
         tick_edge_threshold: Option<u16>,
-        filter_pool_keys: Option<HashSet<PoolKey>>
+        filter_pool_keys: Option<HashSet<PoolKey>>,
+        ticks_per_batch: Option<usize>
     ) -> (Self, Arc<DashMap<PoolId, BaselinePoolState>>) {
         // Fetch all existing pool keys to get their fees
         let all_pool_keys_with_fees = fetch_angstrom_pools(
@@ -93,6 +92,7 @@ where
             pool_manager,
             tick_band: tick_band.unwrap_or(INITIAL_TICKS_PER_SIDE),
             tick_edge_threshold: tick_edge_threshold.unwrap_or(100),
+            ticks_per_batch: ticks_per_batch.unwrap_or(DEFAULT_TICKS_PER_BATCH),
             tick_loading: FuturesUnordered::default(),
             pool_generator: FuturesUnordered::default()
         };
@@ -234,8 +234,7 @@ where
         );
 
         // Create fee configuration with provided values
-        let fee_config =
-            crate::uni_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
+        let fee_config = uni_v4_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
 
         // Create and return BaselinePoolState
         Ok(BaselinePoolState::new(
@@ -305,7 +304,7 @@ where
 
         while ticks_loaded < self.tick_band {
             let ticks_to_load =
-                std::cmp::min(TICKS_PER_BATCH as u16, self.tick_band - ticks_loaded);
+                std::cmp::min(self.ticks_per_batch as u16, self.tick_band - ticks_loaded);
 
             let (batch_ticks, next_tick) = self
                 .get_tick_data_batch_request(
@@ -425,7 +424,8 @@ where
         tick_spacing: i32,
         block_number: Option<u64>,
         provider: Arc<P>,
-        tick_band: u16
+        tick_band: u16,
+        ticks_per_batch: usize
     ) -> Result<
         (HashMap<i32, TickInfo>, HashMap<i16, alloy::primitives::U256>),
         BaselinePoolFactoryError
@@ -439,7 +439,8 @@ where
                 tick_spacing,
                 block_number,
                 provider.clone(),
-                tick_band
+                tick_band,
+                ticks_per_batch
             ),
             Self::load_ticks_in_direction_static(
                 data_loader,
@@ -448,7 +449,8 @@ where
                 tick_spacing,
                 block_number,
                 provider,
-                tick_band
+                tick_band,
+                ticks_per_batch
             )
         )
         .await;
@@ -472,14 +474,15 @@ where
         tick_spacing: i32,
         block_number: Option<u64>,
         provider: Arc<P>,
-        tick_band: u16
+        tick_band: u16,
+        ticks_per_batch: usize
     ) -> Result<Vec<TickData>, BaselinePoolFactoryError> {
         let mut fetched_ticks = Vec::new();
         let mut tick_start = current_tick;
         let mut ticks_loaded = 0u16;
 
         while ticks_loaded < tick_band {
-            let ticks_to_load = std::cmp::min(TICKS_PER_BATCH as u16, tick_band - ticks_loaded);
+            let ticks_to_load = std::cmp::min(ticks_per_batch as u16, tick_band - ticks_loaded);
 
             let (batch_ticks, next_tick) = Self::get_tick_data_batch_request_static(
                 data_loader,
@@ -647,7 +650,8 @@ where
             let mut ticks_loaded = 0u16;
 
             while ticks_loaded < num_ticks {
-                let ticks_to_load = std::cmp::min(TICKS_PER_BATCH as u16, num_ticks - ticks_loaded);
+                let ticks_to_load =
+                    std::cmp::min(DEFAULT_TICKS_PER_BATCH as u16, num_ticks - ticks_loaded);
 
                 let (batch_ticks, _) = data_loader
                     .load_tick_data(
@@ -763,7 +767,8 @@ where
                 tick_spacing,
                 Some(block),
                 provider,
-                INITIAL_TICKS_PER_SIDE
+                INITIAL_TICKS_PER_SIDE,
+                DEFAULT_TICKS_PER_BATCH
             )
             .await?;
 
@@ -779,7 +784,7 @@ where
 
             // Create fee configuration with provided values
             let fee_config =
-                crate::uni_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
+                uni_v4_structure::FeeConfiguration { bundle_fee, swap_fee, protocol_fee };
 
             // Create and return BaselinePoolState with Uniswap pool_id
             Ok((

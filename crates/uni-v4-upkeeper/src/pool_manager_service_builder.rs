@@ -2,13 +2,14 @@ use std::{collections::HashSet, sync::Arc};
 
 use alloy::{primitives::Address, providers::Provider};
 use futures::Stream;
+use tokio::sync::mpsc;
+use uni_v4_common::{PoolId, PoolUpdate};
 
 use super::{
     pool_data_loader::DataLoader,
     pool_key::PoolKey,
     pool_manager_service::{PoolManagerService, PoolManagerServiceError},
     pool_registry::UniswapPoolRegistry,
-    pools::PoolId,
     slot0::Slot0Stream
 };
 use crate::pool_providers::PoolEventStream;
@@ -27,12 +28,16 @@ where
     event_stream:         Event,
 
     // Optional fields with defaults
-    initial_tick_range_size: Option<u16>,
-    tick_edge_threshold:     Option<u16>,
-    fixed_pools:             Option<HashSet<PoolKey>>,
-    auto_pool_creation:      bool,
-    slot0_stream:            Option<S>,
-    current_block:           Option<u64>
+    initial_tick_range_size:    Option<u16>,
+    tick_edge_threshold:        Option<u16>,
+    fixed_pools:                Option<HashSet<PoolKey>>,
+    auto_pool_creation:         bool,
+    slot0_stream:               Option<S>,
+    current_block:              Option<u64>,
+    ticks_per_batch:            Option<usize>,
+    reorg_detection_blocks:     Option<u64>,
+    reorg_lookback_block_chunk: Option<u64>,
+    update_channel:             Option<mpsc::Sender<PoolUpdate>>
 }
 
 impl<P, Event, Slot0> PoolManagerServiceBuilder<P, Event, Slot0>
@@ -61,7 +66,11 @@ where
             fixed_pools: None,
             auto_pool_creation: true,
             slot0_stream: None,
-            current_block: None
+            current_block: None,
+            ticks_per_batch: None,
+            reorg_detection_blocks: None,
+            reorg_lookback_block_chunk: None,
+            update_channel: None
         }
     }
 }
@@ -100,24 +109,54 @@ where
         self
     }
 
+    /// Set the number of ticks to load per batch
+    pub fn with_ticks_per_batch(mut self, ticks_per_batch: usize) -> Self {
+        self.ticks_per_batch = Some(ticks_per_batch);
+        self
+    }
+
+    /// Set the number of blocks to keep for reorg detection
+    pub fn with_reorg_detection_blocks(mut self, blocks: u64) -> Self {
+        self.reorg_detection_blocks = Some(blocks);
+        self
+    }
+
+    /// Set the chunk size for reorg lookback
+    pub fn with_reorg_lookback_block_chunk(mut self, chunk_size: u64) -> Self {
+        self.reorg_lookback_block_chunk = Some(chunk_size);
+        self
+    }
+
+    /// Set the channel for sending pool updates
+    /// When set, the service will send all updates via this channel instead of
+    /// applying them directly
+    pub fn with_update_channel(mut self, sender: mpsc::Sender<PoolUpdate>) -> Self {
+        self.update_channel = Some(sender);
+        self
+    }
+
     /// Set the slot0 update stream
     pub fn with_slot0_stream<NewS: Slot0Stream + 'static>(
         self,
         stream: NewS
     ) -> PoolManagerServiceBuilder<P, Event, NewS> {
         PoolManagerServiceBuilder {
-            provider:                self.provider,
-            angstrom_address:        self.angstrom_address,
-            controller_address:      self.controller_address,
-            pool_manager_address:    self.pool_manager_address,
-            deploy_block:            self.deploy_block,
-            event_stream:            self.event_stream,
-            initial_tick_range_size: self.initial_tick_range_size,
-            tick_edge_threshold:     self.tick_edge_threshold,
-            fixed_pools:             self.fixed_pools,
-            auto_pool_creation:      self.auto_pool_creation,
-            slot0_stream:            Some(stream),
-            current_block:           self.current_block
+            provider:                   self.provider,
+            angstrom_address:           self.angstrom_address,
+            controller_address:         self.controller_address,
+            pool_manager_address:       self.pool_manager_address,
+            deploy_block:               self.deploy_block,
+            event_stream:               self.event_stream,
+            initial_tick_range_size:    self.initial_tick_range_size,
+            tick_edge_threshold:        self.tick_edge_threshold,
+            fixed_pools:                self.fixed_pools,
+            auto_pool_creation:         self.auto_pool_creation,
+            slot0_stream:               Some(stream),
+            current_block:              self.current_block,
+            ticks_per_batch:            self.ticks_per_batch,
+            reorg_detection_blocks:     self.reorg_detection_blocks,
+            reorg_lookback_block_chunk: self.reorg_lookback_block_chunk,
+            update_channel:             self.update_channel
         }
     }
 
@@ -144,7 +183,9 @@ where
             self.fixed_pools,
             self.auto_pool_creation,
             self.slot0_stream,
-            self.current_block
+            self.current_block,
+            self.ticks_per_batch,
+            self.update_channel
         )
         .await?;
 
@@ -195,7 +236,7 @@ impl Default for NoOpEventStream {
 }
 
 impl Stream for NoOpEventStream {
-    type Item = Vec<crate::uniswap::pool_providers::pool_update_provider::PoolUpdate>;
+    type Item = Vec<uni_v4_common::PoolUpdate>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,

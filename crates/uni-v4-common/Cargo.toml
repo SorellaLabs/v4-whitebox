@@ -1,0 +1,19 @@
+[package]
+name = "uni-v4-common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# External dependencies
+alloy.workspace = true
+alloy-primitives.workspace = true
+dashmap.workspace = true
+eyre.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uni-v4-structure.workspace = true
+uniswap_v3_math.workspace = true

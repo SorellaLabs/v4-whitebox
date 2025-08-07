@@ -8,6 +8,8 @@ use alloy::{
 };
 use alloy_primitives::{B256, I256, Log};
 use itertools::Itertools;
+use uni_v4_common::{PoolError, PoolId as AngstromPoolId};
+use uni_v4_structure::{ray::Ray, sqrt_pricex96::SqrtPriceX96};
 use uniswap_v3_math::tick_math::{MAX_TICK, MIN_TICK};
 
 use super::{
@@ -15,13 +17,9 @@ use super::{
         get_uniswap_v_4_pool_data::GetUniswapV4PoolData,
         get_uniswap_v_4_tick_data::GetUniswapV4TickData
     },
-    pool_registry::UniswapPoolRegistry,
-    pools::PoolId as AngstromPoolId
+    pool_registry::UniswapPoolRegistry
 };
-use crate::{
-    uni_structure::{ray::Ray, sqrt_pricex96::SqrtPriceX96},
-    uniswap::{i128_to_i256, pools::PoolError}
-};
+use crate::i128_to_i256;
 
 sol! {
     #[derive(Debug)]
