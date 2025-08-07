@@ -194,8 +194,29 @@ where
     fn dispatch_update(&mut self, update: PoolUpdate) {
         if let Some(sender) = &self.update_sender {
             // Channel mode: send the update
-            if let Err(e) = sender.try_send(update) {
+            if let Err(e) = sender.try_send(update.clone()) {
                 tracing::error!("Failed to send update via channel: {}", e);
+            }
+
+            // Always process certain critical updates internally even in channel mode
+            match &update {
+                PoolUpdate::NewBlock(block) => {
+                    self.current_block = *block;
+                }
+                PoolUpdate::NewPool { .. } => {
+                    // CRITICAL: Process new pool to ensure it gets created in the factory
+                    // This will trigger pool data loading and initialization
+                    self.process_pool_update(update);
+                }
+                PoolUpdate::PoolRemoved { .. } => {
+                    // Process pool removal to clean up internal state
+                    self.pools.update_pools(vec![update.clone()]);
+                    self.process_pool_update(update);
+                }
+                _ => {
+                    // Other updates are just forwarded via channel without
+                    // internal processing
+                }
             }
         } else {
             // Direct mode: apply the update
