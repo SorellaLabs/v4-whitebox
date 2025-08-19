@@ -67,17 +67,17 @@ impl UniswapPools {
             return
         }
 
-        let mut new_block_number = 0;
+        let mut new_block_number = None;
         // we sort ascending
         updates.sort_by(|a, b| a.sort(b));
 
         for update in updates {
             match update {
                 PoolUpdate::NewBlock(block_number) => {
-                    new_block_number = block_number;
+                    new_block_number = Some(block_number);
                 }
                 PoolUpdate::Reorg { to_block, .. } => {
-                    new_block_number = to_block;
+                    new_block_number = Some(to_block);
                 }
                 PoolUpdate::SwapEvent { pool_id, event, .. } => {
                     let Some(mut pool) = self.pools.get_mut(&pool_id) else {
@@ -151,17 +151,11 @@ impl UniswapPools {
             }
         }
 
-        tracing::debug!("processed block: {}", new_block_number);
-
-        assert!(
-            new_block_number != 0,
-            "Got a update but no block info with update. Should never happen"
-        );
-
-        self.block_number
-            .store(new_block_number, std::sync::atomic::Ordering::SeqCst);
-
-        self.notifier.notify_waiters();
+        if let Some(bn) = new_block_number {
+            self.block_number
+                .store(bn, std::sync::atomic::Ordering::SeqCst);
+            self.notifier.notify_waiters();
+        }
     }
 
     /// Update pools using a PoolUpdateDelivery source
