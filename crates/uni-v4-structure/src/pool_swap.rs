@@ -48,8 +48,6 @@ impl<'a> PoolSwap<'a> {
 
         let mut amount_remaining = self.target_amount;
         let mut sqrt_price_x96: U256 = self.liquidity.current_sqrt_price.into();
-        let mut total_in = U256::ZERO;
-        let mut total_out = U256::ZERO;
 
         let mut steps = Vec::new();
 
@@ -93,14 +91,25 @@ impl<'a> PoolSwap<'a> {
                 // we add as is neg
                 amount_remaining = amount_remaining.saturating_add(I256::from_raw(amount_out));
             }
-            // add total in
-            total_in += amount_in + fee_amount;
-            total_out += amount_out;
 
             let (d_t0, d_t1) = if self.direction {
-                (amount_in.to(), amount_out.to())
+                // zero-for-one swap
+                if exact_input {
+                    // exact input: fee taken from output (token1)
+                    (amount_in.to(), amount_out.saturating_sub(fee_amount).to())
+                } else {
+                    // exact output: fee added to input (token0)
+                    ((amount_in + fee_amount).to(), amount_out.to())
+                }
             } else {
-                (amount_out.to(), amount_in.to())
+                // one-for-zero swap
+                if exact_input {
+                    // exact input: fee taken from output (token0)
+                    (amount_out.saturating_sub(fee_amount).to(), amount_in.to())
+                } else {
+                    // exact output: fee added to input (token1)
+                    (amount_out.to(), (amount_in + fee_amount).to())
+                }
             };
 
             self.liquidity.move_to_next_tick(
