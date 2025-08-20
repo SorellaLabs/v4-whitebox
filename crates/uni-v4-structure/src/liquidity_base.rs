@@ -16,7 +16,7 @@ use super::tick_info::TickInfo;
 use crate::sqrt_pricex96::SqrtPriceX96;
 
 /// baseline holder for
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BaselineLiquidity {
     pub(super) tick_spacing:     i32,
     pub(super) start_tick:       i32,
@@ -346,7 +346,23 @@ pub struct LiquidityAtPoint<'a> {
     tick_bitmap:                   &'a HashMap<i16, U256>
 }
 
-impl LiquidityAtPoint<'_> {
+impl<'a> LiquidityAtPoint<'a> {
+    pub fn default_with_ref(
+        initialized_ticks: &'a HashMap<i32, TickInfo>,
+        tick_bitmap: &'a HashMap<i16, U256>
+    ) -> LiquidityAtPoint<'a> {
+        Self {
+            tick_spacing: Default::default(),
+            current_tick: Default::default(),
+            current_sqrt_price: Default::default(),
+            current_liquidity: Default::default(),
+            max_tick_init: Default::default(),
+            min_tick_init: Default::default(),
+            initialized_ticks,
+            tick_bitmap
+        }
+    }
+
     pub fn min_sqrt_price(&self) -> SqrtPriceX96 {
         SqrtPriceX96::at_tick(self.min_tick_init + 1).unwrap()
     }
