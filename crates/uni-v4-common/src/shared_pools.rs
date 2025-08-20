@@ -6,7 +6,10 @@ use std::{
 use alloy_primitives::{B256, FixedBytes};
 use dashmap::{DashMap, mapref::one::Ref};
 use thiserror::Error;
-use tokio::sync::{Notify, futures::Notified};
+use tokio::sync::{
+    Notify,
+    futures::{Notified, OwnedNotified}
+};
 use uni_v4_structure::BaselinePoolState;
 use uniswap_v3_math::error::UniswapV3MathError;
 
@@ -60,6 +63,10 @@ impl UniswapPools {
 
     pub fn next_block_future(&self) -> Notified<'_> {
         self.notifier.notified()
+    }
+
+    pub fn next_block_future_owned(&self) -> OwnedNotified {
+        self.notifier.clone().notified_owned()
     }
 
     pub fn update_pools(&self, mut updates: Vec<PoolUpdate>) {
