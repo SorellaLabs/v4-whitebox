@@ -93,23 +93,13 @@ impl<'a> PoolSwap<'a> {
             }
 
             let (d_t0, d_t1) = if self.direction {
-                // zero-for-one swap
-                if exact_input {
-                    // exact input: fee taken from output (token1)
-                    (amount_in.to(), amount_out.saturating_sub(fee_amount).to())
-                } else {
-                    // exact output: fee added to input (token0)
-                    ((amount_in + fee_amount).to(), amount_out.to())
-                }
+                // zero-for-one swap: token0 in, token1 out
+                // fee is always on the input (token0) side
+                ((amount_in + fee_amount).to(), amount_out.to())
             } else {
-                // one-for-zero swap
-                if exact_input {
-                    // exact input: fee taken from output (token0)
-                    (amount_out.saturating_sub(fee_amount).to(), amount_in.to())
-                } else {
-                    // exact output: fee added to input (token1)
-                    (amount_out.to(), (amount_in + fee_amount).to())
-                }
+                // one-for-zero swap: token1 in, token0 out
+                // fee is always on the input (token1) side
+                (amount_out.to(), (amount_in + fee_amount).to())
             };
 
             self.liquidity.move_to_next_tick(
