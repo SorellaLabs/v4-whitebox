@@ -140,8 +140,15 @@ impl<'a> PoolSwap<'a> {
                     p_target_amount_u256 * one_e6 / (one_e6 - fee_rate_e6) - p_target_amount_u256
                 };
 
-                let adjusted_d_t0 = total_d_t0.saturating_add(fee.saturating_to::<u128>());
-                (adjusted_d_t0, total_d_t1)
+                // based on direction here, if this is the input token, we add,
+                // if output, we subtract.
+                if self.direction {
+                    let adjusted_d_t0 = total_d_t0.saturating_add(fee.saturating_to::<u128>());
+                    (adjusted_d_t0, total_d_t1)
+                } else {
+                    let adjusted_d_t0 = total_d_t0.saturating_sub(fee.saturating_to::<u128>());
+                    (adjusted_d_t0, total_d_t1)
+                }
             } else {
                 // Protocol fee applies to token1
                 let p_target_amount_u256 = U256::from(total_d_t1);
@@ -152,8 +159,13 @@ impl<'a> PoolSwap<'a> {
                     p_target_amount_u256 * one_e6 / (one_e6 - fee_rate_e6) - p_target_amount_u256
                 };
 
-                let adjusted_d_t1 = total_d_t1.saturating_add(fee.saturating_to::<u128>());
-                (total_d_t0, adjusted_d_t1)
+                if self.direction {
+                    let adjusted_d_t1 = total_d_t1.saturating_sub(fee.saturating_to::<u128>());
+                    (total_d_t0, adjusted_d_t1)
+                } else {
+                    let adjusted_d_t1 = total_d_t1.saturating_add(fee.saturating_to::<u128>());
+                    (total_d_t0, adjusted_d_t1)
+                }
             }
         } else {
             // In bundle mode, no protocol fee is applied during swap
