@@ -9,7 +9,7 @@ use alloy::{primitives::Address, providers::Provider};
 use futures::{Future, Stream, StreamExt};
 use thiserror::Error;
 use tokio::sync::mpsc;
-use uni_v4_common::{PoolId, PoolKey, PoolUpdate, Slot0Update, UniswapPools};
+use uni_v4_common::{PoolId, PoolKey, PoolUpdate, UniswapPools};
 use uni_v4_structure::BaselinePoolState;
 
 use super::{
@@ -218,27 +218,8 @@ where
                 }
             }
         } else {
-            // Direct mode: apply the update
-            match &update {
-                PoolUpdate::NewBlock(block) => {
-                    self.current_block = *block;
-                }
-                _ => {
-                    // Let update_pools handle all other updates
-                    self.pools.update_pools(vec![update.clone()]);
-                    self.process_pool_update(update);
-                }
-            }
-        }
-    }
-
-    pub fn slot0_update(&self, update: Slot0Update) {
-        if let Some(mut pool) = self.get_pools().get_mut(&update.angstrom_pool_id) {
-            pool.value_mut().update_slot0(
-                update.tick,
-                update.sqrt_price_x96.into(),
-                update.liquidity
-            );
+            self.process_pool_update(update.clone());
+            self.pools.update_pools(vec![update]);
         }
     }
 
@@ -348,9 +329,7 @@ where
                 // These are handled by update_pools
                 tracing::debug!("NewTicks update will be handled by update_pools");
             }
-            PoolUpdate::Slot0Update(update) => {
-                self.slot0_update(update.clone());
-            }
+            PoolUpdate::Slot0Update(_) => {}
         }
     }
 }
