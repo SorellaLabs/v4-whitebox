@@ -121,39 +121,43 @@ impl<'a> PoolSwap<'a> {
             (t0, t1)
         });
 
-        // Calculate protocol fee for unlocked mode
-        let (protocol_fee_amount, protocol_fee_token) = if !self.is_bundle {
-            // In unlocked mode, apply protocol fee to the target amount
-            let target_amount = if exact_input != self.direction {
-                I256::from_raw(U256::from(total_d_t0))
-            } else {
-                I256::from_raw(U256::from(total_d_t1))
-            };
-
-            // Take absolute value of target amount
-            let p_target_amount =
-                if target_amount < I256::ZERO { target_amount.neg() } else { target_amount };
-            let p_target_amount_u256 = p_target_amount.into_raw();
-
-            // false for token0, true for token1
-            let protocol_fee_token = self.direction;
-
+        // Calculate and apply protocol fee directly to deltas for unlocked mode
+        let (final_d_t0, final_d_t1) = if !self.is_bundle {
             let fee_rate_e6 = U256::from(self.fee_config.protocol_fee);
             let one_e6 = U256::from(1_000_000);
 
-            let protocol_fee_amount_u256 = if exact_input {
-                p_target_amount_u256 * fee_rate_e6 / one_e6
+            // Determine which token gets the protocol fee based on swap direction
+            // exact_input != self.direction determines the target token
+            let target_is_token0 = exact_input != self.direction;
+
+            if target_is_token0 {
+                // Protocol fee applies to token0
+                let p_target_amount_u256 = U256::from(total_d_t0);
+
+                let fee = if exact_input {
+                    p_target_amount_u256 * fee_rate_e6 / one_e6
+                } else {
+                    p_target_amount_u256 * one_e6 / (one_e6 - fee_rate_e6) - p_target_amount_u256
+                };
+
+                let adjusted_d_t0 = total_d_t0.saturating_add(fee.saturating_to::<u128>());
+                (adjusted_d_t0, total_d_t1)
             } else {
-                p_target_amount_u256 * one_e6 / (one_e6 - fee_rate_e6) - p_target_amount_u256
-            };
+                // Protocol fee applies to token1
+                let p_target_amount_u256 = U256::from(total_d_t1);
 
-            // Convert back to u128 for the protocol fee amount
-            let protocol_fee_amount = protocol_fee_amount_u256.saturating_to::<u128>();
+                let fee = if exact_input {
+                    p_target_amount_u256 * fee_rate_e6 / one_e6
+                } else {
+                    p_target_amount_u256 * one_e6 / (one_e6 - fee_rate_e6) - p_target_amount_u256
+                };
 
-            (protocol_fee_amount, protocol_fee_token)
+                let adjusted_d_t1 = total_d_t1.saturating_add(fee.saturating_to::<u128>());
+                (total_d_t0, adjusted_d_t1)
+            }
         } else {
             // In bundle mode, no protocol fee is applied during swap
-            (0, false)
+            (total_d_t0, total_d_t1)
         };
 
         Ok(PoolSwapResult {
@@ -162,12 +166,10 @@ impl<'a> PoolSwap<'a> {
             start_tick: range_start_tick,
             end_price: self.liquidity.current_sqrt_price,
             end_tick: self.liquidity.current_tick,
-            total_d_t0,
-            total_d_t1,
+            total_d_t0: final_d_t0,
+            total_d_t1: final_d_t1,
             steps,
             end_liquidity: self.liquidity,
-            protocol_fee_amount,
-            protocol_fee_token,
             is_bundle: self.is_bundle
         })
     }
@@ -175,18 +177,16 @@ impl<'a> PoolSwap<'a> {
 
 #[derive(Debug, Clone)]
 pub struct PoolSwapResult<'a> {
-    pub fee_config:          FeeConfiguration,
-    pub start_price:         SqrtPriceX96,
-    pub start_tick:          i32,
-    pub end_price:           SqrtPriceX96,
-    pub end_tick:            i32,
-    pub total_d_t0:          u128,
-    pub total_d_t1:          u128,
-    pub steps:               Vec<PoolSwapStep>,
-    pub end_liquidity:       LiquidityAtPoint<'a>,
-    pub protocol_fee_amount: u128,
-    pub protocol_fee_token:  bool, // false for token0, true for token1
-    pub is_bundle:           bool
+    pub fee_config:    FeeConfiguration,
+    pub start_price:   SqrtPriceX96,
+    pub start_tick:    i32,
+    pub end_price:     SqrtPriceX96,
+    pub end_tick:      i32,
+    pub total_d_t0:    u128,
+    pub total_d_t1:    u128,
+    pub steps:         Vec<PoolSwapStep>,
+    pub end_liquidity: LiquidityAtPoint<'a>,
+    pub is_bundle:     bool
 }
 
 impl<'a> PoolSwapResult<'a> {

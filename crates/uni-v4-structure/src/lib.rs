@@ -108,18 +108,16 @@ impl BaselinePoolState {
 
     pub fn noop(&self) -> PoolSwapResult<'_> {
         PoolSwapResult {
-            fee_config:          self.fee_config.clone(),
-            start_price:         self.liquidity.start_sqrt_price,
-            start_tick:          self.liquidity.start_tick,
-            end_price:           self.liquidity.start_sqrt_price,
-            end_tick:            self.liquidity.start_tick,
-            total_d_t0:          0,
-            total_d_t1:          0,
-            steps:               vec![],
-            end_liquidity:       self.liquidity.current(),
-            protocol_fee_amount: 0,
-            protocol_fee_token:  false,
-            is_bundle:           true
+            fee_config:    self.fee_config.clone(),
+            start_price:   self.liquidity.start_sqrt_price,
+            start_tick:    self.liquidity.start_tick,
+            end_price:     self.liquidity.start_sqrt_price,
+            end_tick:      self.liquidity.start_tick,
+            total_d_t0:    0,
+            total_d_t1:    0,
+            steps:         vec![],
+            end_liquidity: self.liquidity.current(),
+            is_bundle:     true
         }
     }
 
